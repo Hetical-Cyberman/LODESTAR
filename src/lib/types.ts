@@ -26,7 +26,7 @@ export type GuardianSnapshot = {
   accountId: string;
   balance: string;
   rules: {
-    amountCap: string;
+    amountCap: number;
     burstLimit: number;
     burstWindowSeconds: number;
     anomalyZScore: number;
