@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GuardRequest, GuardianSnapshot, NewRequestInput } from "@/lib/types";
-import TestnetWallet from "./testnet-wallet";
+import { useNearWallet } from "@/app/wallet-provider";
 
 type Toast = { tone: "success" | "error"; message: string };
 
@@ -34,6 +34,7 @@ function StateIcon({ state }: { state: "pending" | "sent" | "denied" }) {
 }
 
 export default function Home() {
+  const ownerWallet = useNearWallet();
   const [snapshot, setSnapshot] = useState<GuardianSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -79,11 +80,27 @@ export default function Home() {
   async function decide(id: string, decision: "approve" | "deny") {
     setBusyId(id);
     try {
-      const response = await fetch(`/api/requests/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) });
+      let authorization = {};
+      if (ownerWallet.accountId) {
+        const challengeResponse = await fetch("/api/guardian/challenges", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: id, decision }),
+        });
+        const challenge = await challengeResponse.json();
+        if (!challengeResponse.ok) throw new Error(challenge.error ?? "Could not prepare owner approval.");
+        const signed = await ownerWallet.signMessage(challenge.message, challenge.recipient, challenge.nonce);
+        authorization = { challengeId: challenge.id, ...signed };
+      }
+      const response = await fetch(`/api/requests/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision, ...authorization }),
+      });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Decision could not be saved.");
       await refresh();
-      setToast({ tone: "success", message: decision === "approve" ? "Approved in mock mode." : "Request denied." });
+      setToast({ tone: "success", message: ownerWallet.accountId
+        ? `Owner signature verified. ${decision === "approve" ? "Mock request approved" : "Mock request denied"}; no transaction was sent.`
+        : decision === "approve" ? "Approved in mock mode." : "Request denied." });
     } catch (error) {
       setToast({ tone: "error", message: error instanceof Error ? error.message : "Something went wrong." });
     } finally {
@@ -139,10 +156,10 @@ export default function Home() {
         <div className="content">
           <div className="page-heading">
             <div><div className="eyebrow"><span className="eyebrow-line" />NEAR TESTNET · WALLET GUARDIAN</div><h1>{activeView === "overview" ? "Your wallet, watched." : activeView === "activity" ? "Activity & decisions." : "Protection rules."}</h1><p className="page-subtitle">{activeView === "overview" ? "Unusual spending pauses here until you say so." : activeView === "activity" ? "A clear record of what passed, paused, or was denied." : "Every request is checked before the Guardian lets it through."}</p></div>
+            <button className="connect-button" onClick={ownerWallet.connect} disabled={!ownerWallet.ready} title="Connect the owner’s NEAR testnet account with HOT Wallet"><span className="connect-dot" />{ownerWallet.accountId ?? (ownerWallet.ready ? "Connect owner wallet" : "Loading wallet…")}<ChevronDown /></button>
           </div>
 
           {activeView === "overview" && <>
-            <TestnetWallet />
             <section className="hero-card">
               <div className="hero-pattern" aria-hidden="true" />
               <div className="hero-copy"><span className="hero-kicker"><span className="pulse-dot" />GUARDIAN IS ACTIVE</span><h2>Your wallet has<br /><em>room to breathe.</em></h2><p>Every payment is checked. Anything unusual waits here for your approval.</p><button className="hero-action" onClick={() => setActiveView("activity")}>Review activity <ArrowRight /></button></div>

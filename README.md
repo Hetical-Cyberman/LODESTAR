@@ -2,21 +2,23 @@
 
 A DAWNIK NEAR Hackathon prototype for reviewing unusual wallet requests before an owner decides what to do.
 
+## Current V1 implementation stage
+
+The dashboard and request API are still mock-only: approval and “sent” status are local SQLite records and do not broadcast transactions. HOT Wallet can sign a short-lived, one-time NEP-413 challenge bound to a pending request and the selected decision. The server checks that the signer is an active full-access key for `OWNER_ACCOUNT_ID`, then records the verified signature in the local audit trail. This currently authorizes only a mock decision; it does not create or send a NEAR transaction. The Guardian signer module is prepared for a dedicated testnet account but is not connected to request execution.
+
+To try signed mock decisions, copy `.env.example` to `.env.local` and set `OWNER_ACCOUNT_ID` to the expected owner’s NEAR testnet account. To prepare the separate Guardian signer, set its testnet account and dedicated testnet-only `ed25519:` secret key, and optionally the RPC URL. Never commit `.env.local`, use a mainnet key, or use an account holding real funds. `/api/guardian/status` reports signer configuration only; it never returns the secret or submits a transaction.
+
 ## Current build status
 
 The dashboard and its seeded scenarios run in **mock mode**. They demonstrate deterministic request evaluation, hold, approve/deny, and a local SQLite audit trail. Mock approvals never send a blockchain transaction.
 
-The overview also includes an optional **NEAR testnet transfer panel**. It connects to HOT Wallet through NEAR Wallet Selector and checks a manually entered native NEAR transfer against the demo amount cap and sample trusted-recipient list. A request stays in the browser until you approve it in Guardian; the connected wallet then presents the transaction for its own signature. Nothing is broadcast before that wallet approval.
-
-This testnet panel is a signing-path demonstration, not live wallet protection. It checks only transfers entered in the panel, uses demo rules rather than live wallet history, and does not persist the transfer review to the SQLite audit trail. It cannot pause transactions started in another app or stop a transaction after broadcast. Use a disposable testnet account only. Never connect a mainnet account for this prototype.
-
-Key changes, fungible tokens, NFTs, contract calls, Telegram approvals, and the on-chain policy contract are not part of the testnet signing flow.
+The V1 signing design uses HOT Wallet only to identify the owner and sign Guardian review decisions. The Guardian server will be the only transaction signer when guarded testnet submission is implemented. Direct owner-wallet transfers are not presented as guarded transfers.
 
 ## Requirements
 
 - Node.js 20.9 or newer
 - npm
-- HOT Wallet (browser extension or Telegram mini-app) with a testnet account to try the optional testnet panel
+- HOT Wallet with the configured owner testnet account to sign a mock review decision
 
 ## Run locally
 
@@ -39,15 +41,6 @@ To use a different local SQLite path, copy `.env.example` to `.env.local` and se
 
 Approving a mock request records a local decision only; it does not send a blockchain transaction.
 
-## Try the optional testnet transfer panel
-
-1. Connect a disposable testnet account using HOT Wallet.
-2. Enter a `.testnet` recipient and a positive NEAR amount.
-3. Review the request and its demo-rule result.
-4. Choose **Approve & send**, then review and approve the transaction in your wallet.
-
-A new recipient or amount above 5 NEAR is flagged for review. The account owner remains the signer and the wallet confirmation is required. Canceling the review does not send anything.
-
 ## Protection behavior
 
 The mock dashboard applies deterministic server-side rules:
@@ -58,16 +51,15 @@ The mock dashboard applies deterministic server-side rules:
 - Anomaly score: use a robust z-score when at least 4 history amounts exist; hold above 3.5.
 - Key change: always hold adding or removing an access key in mock mode.
 
-The optional testnet panel currently applies only the amount cap and demo trusted-recipient check in the browser. No model makes an allow/hold decision.
+No model makes an allow/hold decision.
 
 ## Project boundary
 
-The Guardian can only review transfers that a user enters through its own testnet panel. This prototype does not monitor an account in the background or protect transfers initiated elsewhere. Testnet transactions use the connected account's own wallet signer and still require wallet approval. SQLite is intended for the local mock prototype; hosted deployment needs persistent storage or a managed database before it can preserve its mock queue and audit history across instances.
+The mock Guardian reviews requests routed through the dashboard; it does not monitor wallet activity in the background or protect transfers initiated elsewhere. The configured Guardian testnet signer is not connected to request execution yet. SQLite is intended for the local prototype; hosted deployment needs persistent storage or a managed database before it can preserve its queue and audit history across instances.
 
 ## Project layout
 
 - `src/app/page.tsx`: dashboard, mock scenarios, activity, and rules.
-- `src/app/testnet-wallet.tsx`: optional testnet wallet connection and transfer review/signing path.
 - `src/app/api/`: mock snapshot, request creation, and decision endpoints.
 - `src/lib/rules.ts`: deterministic mock rule evaluation and anomaly score.
 - `src/lib/db.ts`: SQLite storage, mock seed data, request state, and audit events.

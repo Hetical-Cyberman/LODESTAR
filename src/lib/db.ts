@@ -2,7 +2,7 @@ import "server-only";
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { evaluateRequest, GUARDIAN_RULES } from "@/lib/rules";
 import type { AuditEvent, GuardRequest, GuardianSnapshot, NewRequestInput, RequestStatus } from "@/lib/types";
 
@@ -41,10 +41,79 @@ function openDatabase() {
       amount REAL NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS owner_challenges (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      owner_account_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      nonce TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    );
   `);
   globalForDb.guardianDb = db;
   seedDatabase(db);
   return db;
+}
+
+export function createOwnerDecisionChallenge(requestId: string, decision: "approve" | "deny") {
+  const ownerAccountId = process.env.OWNER_ACCOUNT_ID?.trim();
+  if (!ownerAccountId?.endsWith(".testnet")) {
+    throw new Error("Set OWNER_ACCOUNT_ID to the owner’s NEAR testnet account before using signed approvals.");
+  }
+  const db = openDatabase();
+  const pending = db.prepare("SELECT id FROM requests WHERE id = ? AND status = 'pending'").get(requestId);
+  if (!pending) return null;
+
+  const id = randomUUID();
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + 5 * 60_000).toISOString();
+  const recipient = process.env.GUARDIAN_APP_ID?.trim() || "guardian-dawnik";
+  const nonce = randomBytes(32).toString("base64");
+  const message = [
+    "DAWNIK Guardian owner authorization",
+    `Challenge: ${id}`,
+    `Request: ${requestId}`,
+    `Decision: ${decision}`,
+    `Expires: ${expiresAt}`,
+    "This signature authorizes only the stated mock decision; it does not sign or send a NEAR transaction.",
+  ].join("\n");
+
+  db.prepare(`INSERT INTO owner_challenges
+    (id, request_id, decision, owner_account_id, message, nonce, recipient, expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, requestId, decision, ownerAccountId, message, nonce, recipient, expiresAt, createdAt.toISOString());
+  db.prepare("DELETE FROM owner_challenges WHERE created_at < ?").run(new Date(createdAt.getTime() - 24 * 60 * 60_000).toISOString());
+  return { id, requestId, decision, ownerAccountId, message, nonce, recipient, expiresAt };
+}
+
+export function getOwnerChallenge(id: string) {
+  const row = openDatabase().prepare("SELECT * FROM owner_challenges WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    id: String(row.id), requestId: String(row.request_id), decision: row.decision as "approve" | "deny",
+    ownerAccountId: String(row.owner_account_id), message: String(row.message), nonce: String(row.nonce),
+    recipient: String(row.recipient), expiresAt: String(row.expires_at), usedAt: row.used_at == null ? null : String(row.used_at),
+  };
+}
+
+export function consumeOwnerChallenge(id: string, accountId: string) {
+  const db = openDatabase();
+  const now = new Date().toISOString();
+  const consume = db.transaction(() => {
+    const result = db.prepare(`UPDATE owner_challenges SET used_at = ?
+      WHERE id = ? AND owner_account_id = ? AND used_at IS NULL AND expires_at > ?`)
+      .run(now, id, accountId, now);
+    if (result.changes !== 1) return false;
+    const challenge = db.prepare("SELECT request_id FROM owner_challenges WHERE id = ?").get(id) as { request_id: string };
+    db.prepare("INSERT INTO audit_events (request_id, action, detail, created_at) VALUES (?, ?, ?, ?)")
+      .run(challenge.request_id, "owner_signature_verified", `Owner ${accountId} authorized this mock decision with a NEP-413 signature.`, now);
+    return true;
+  });
+  return consume();
 }
 
 function seedDatabase(db: Database.Database) {
