@@ -2,7 +2,9 @@
   "name": "wallet-guardian-agent",
   "version": "0.1.0",
   "private": true,
-  "engines": { "node": ">=20.9.0" },
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
@@ -10,6 +12,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/modal-ui": "^10.1.4",
+    "@near-wallet-selector/my-near-wallet": "^10.1.4",
     "better-sqlite3": "^12.2.0",
     "next": "^16.4.0",
     "react": "^19.3.0",

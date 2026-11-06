@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GuardRequest, GuardianSnapshot, NewRequestInput } from "@/lib/types";
+import TestnetWallet from "./testnet-wallet";
 
 type Toast = { tone: "success" | "error"; message: string };
 
@@ -132,16 +133,16 @@ export default function Home() {
       <section className="main-panel" id="top">
         <header className="topbar">
           <div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{activeView === "overview" ? "Overview" : activeView === "activity" ? "Activity" : "Protection rules"}</strong></div>
-          <div className="topbar-right"><span className="mode-pill"><span className="mode-light" />MOCK MODE</span><button className="avatar avatar--small" aria-label="Demo profile">D</button></div>
+          <div className="topbar-right"><span className="mode-pill"><span className="mode-light" />MOCK DASHBOARD</span><button className="avatar avatar--small" aria-label="Demo profile">D</button></div>
         </header>
 
         <div className="content">
           <div className="page-heading">
             <div><div className="eyebrow"><span className="eyebrow-line" />NEAR TESTNET · WALLET GUARDIAN</div><h1>{activeView === "overview" ? "Your wallet, watched." : activeView === "activity" ? "Activity & decisions." : "Protection rules."}</h1><p className="page-subtitle">{activeView === "overview" ? "Unusual spending pauses here until you say so." : activeView === "activity" ? "A clear record of what passed, paused, or was denied." : "Every request is checked before the Guardian lets it through."}</p></div>
-            <button className="connect-button" disabled><span className="connect-dot" />{snapshot?.accountId ?? "Connecting wallet…"}<ChevronDown /></button>
           </div>
 
           {activeView === "overview" && <>
+            <TestnetWallet />
             <section className="hero-card">
               <div className="hero-pattern" aria-hidden="true" />
               <div className="hero-copy"><span className="hero-kicker"><span className="pulse-dot" />GUARDIAN IS ACTIVE</span><h2>Your wallet has<br /><em>room to breathe.</em></h2><p>Every payment is checked. Anything unusual waits here for your approval.</p><button className="hero-action" onClick={() => setActiveView("activity")}>Review activity <ArrowRight /></button></div>
@@ -166,7 +167,7 @@ export default function Home() {
           {activeView === "activity" && <ActivityView snapshot={snapshot} loading={loading} busyId={busyId} onDecision={decide} />}
           {activeView === "rules" && <RulesView snapshot={snapshot} />}
 
-          <footer className="footer"><span><span className="footer-lock"><LockGlyph /></span>Protected by deterministic rules</span><span>DEMO BUILD · NO LIVE TRANSACTIONS</span></footer>
+          <footer className="footer"><span><span className="footer-lock"><LockGlyph /></span>Protected by deterministic rules</span><span>DEMO RULES · TESTNET TRANSFERS NEED WALLET SIGNATURE</span></footer>
         </div>
       </section>
       {toast && <div className={`toast toast--${toast.tone}`} role="status"><span>{toast.tone === "success" ? "✓" : "!"}</span>{toast.message}</div>}
