@@ -6,7 +6,7 @@ A DAWNIK NEAR Hackathon prototype for reviewing unusual wallet requests before a
 
 The dashboard and its seeded scenarios run in **mock mode**. They demonstrate deterministic request evaluation, hold, approve/deny, and a local SQLite audit trail. Mock approvals never send a blockchain transaction.
 
-The overview also includes an optional **NEAR testnet transfer panel**. It connects through NEAR Wallet Selector and checks a manually entered native NEAR transfer against the demo amount cap and sample trusted-recipient list. A request stays in the browser until you approve it in Guardian; the connected wallet then presents the transaction for its own signature. Nothing is broadcast before that wallet approval.
+The overview also includes an optional **NEAR testnet transfer panel**. It connects to HOT Wallet through NEAR Wallet Selector and checks a manually entered native NEAR transfer against the demo amount cap and sample trusted-recipient list. A request stays in the browser until you approve it in Guardian; the connected wallet then presents the transaction for its own signature. Nothing is broadcast before that wallet approval.
 
 This testnet panel is a signing-path demonstration, not live wallet protection. It checks only transfers entered in the panel, uses demo rules rather than live wallet history, and does not persist the transfer review to the SQLite audit trail. It cannot pause transactions started in another app or stop a transaction after broadcast. Use a disposable testnet account only. Never connect a mainnet account for this prototype.
 
@@ -16,7 +16,7 @@ Key changes, fungible tokens, NFTs, contract calls, Telegram approvals, and the 
 
 - Node.js 20.9 or newer
 - npm
-- A NEAR wallet with a testnet account to try the optional testnet panel
+- HOT Wallet (browser extension or Telegram mini-app) with a testnet account to try the optional testnet panel
 
 ## Run locally
 
@@ -41,7 +41,7 @@ Approving a mock request records a local decision only; it does not send a block
 
 ## Try the optional testnet transfer panel
 
-1. Connect a disposable NEAR testnet account using MyNearWallet.
+1. Connect a disposable testnet account using HOT Wallet.
 2. Enter a `.testnet` recipient and a positive NEAR amount.
 3. Review the request and its demo-rule result.
 4. Choose **Approve & send**, then review and approve the transaction in your wallet.

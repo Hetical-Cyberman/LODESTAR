@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { actionCreators, setupWalletSelector, type WalletSelector } from "@near-wallet-selector/core";
 import type { WalletSelectorModal } from "@near-wallet-selector/modal-ui";
 import { setupModal } from "@near-wallet-selector/modal-ui";
-import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
+import { setupHotWallet } from "@near-wallet-selector/hot-wallet";
 
 type TransferIntent = { accountId: string; recipient: string; amount: string; reason: string | null };
 
@@ -30,10 +30,10 @@ export default function TestnetWallet() {
 
     void setupWalletSelector({
       network: "testnet",
-      modules: [setupMyNearWallet()],
+      modules: [setupHotWallet()],
     }).then((created) => {
       if (!alive) return;
-      modal = setupModal(created, { theme: "dark", description: "Connect a NEAR testnet wallet" });
+      modal = setupModal(created, { theme: "dark", description: "Connect a HOT Wallet testnet account" });
       setModal(modal);
       const syncAccount = () => {
         const active = created.store.getState().accounts.find((account) => account.active);
@@ -108,7 +108,7 @@ export default function TestnetWallet() {
     <section className="testnet-panel" aria-labelledby="testnet-heading">
       <div className="testnet-panel__head">
         <div><span className="testnet-eyebrow">OPTIONAL · NEAR TESTNET</span><h2 id="testnet-heading">Try a guarded transfer</h2><p>Connect a testnet wallet, review the request, then approve it in your wallet.</p></div>
-        {accountId ? <button className="testnet-connect" onClick={() => void disconnect()} title="Disconnect testnet wallet">{accountId}<span>Disconnect</span></button> : <button className="testnet-connect" disabled={!selector} onClick={() => modal?.show()}>{selector ? "Connect testnet wallet" : "Loading wallet options…"}</button>}
+        {accountId ? <button className="testnet-connect" onClick={() => void disconnect()} title="Disconnect testnet wallet">{accountId}<span>Disconnect</span></button> : <button className="testnet-connect" disabled={!selector} onClick={() => modal?.show()}>{selector ? "Connect HOT Wallet" : "Loading wallet options…"}</button>}
       </div>
       <div className="testnet-boundary"><strong>Testnet only.</strong> Only transfers started here are checked. The wallet asks you to sign before anything is broadcast. Checks use the demo rules and trusted-recipient list, not live wallet history.</div>
       {accountId && <form className="testnet-form" onSubmit={reviewTransfer}>
@@ -124,5 +124,3 @@ export default function TestnetWallet() {
     </section>
   );
 }
-
-
