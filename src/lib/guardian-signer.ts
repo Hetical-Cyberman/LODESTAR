@@ -8,12 +8,14 @@ export type GuardianSignerConfig = {
   accountId: string;
   rpcUrl: string;
   privateKey: string;
+  policyContractId?: string;
 };
 
 export type GuardianSignerStatus = {
   configured: boolean;
   network: "testnet";
   accountId: string | null;
+  policyContractId: string | null;
   rpcUrl: string;
   missing: string[];
 };
@@ -24,6 +26,7 @@ function readConfig(): GuardianSignerConfig | null {
   const accountId = process.env.GUARDIAN_ACCOUNT_ID?.trim() ?? "";
   const privateKey = process.env.GUARDIAN_PRIVATE_KEY?.trim() ?? "";
   const rpcUrl = process.env.NEAR_RPC_URL?.trim() || DEFAULT_TESTNET_RPC;
+  const policyContractId = process.env.POLICY_CONTRACT_ID?.trim();
 
   if (!accountId.endsWith(".testnet")) {
     throw new Error("GUARDIAN_ACCOUNT_ID must be a NEAR testnet account ending in .testnet.");
@@ -34,8 +37,11 @@ function readConfig(): GuardianSignerConfig | null {
   if (!rpcUrl.startsWith("https://")) {
     throw new Error("NEAR_RPC_URL must use HTTPS.");
   }
+  if (policyContractId && !policyContractId.endsWith(".testnet")) {
+    throw new Error("POLICY_CONTRACT_ID must be a valid NEAR testnet account.");
+  }
 
-  return { accountId, privateKey, rpcUrl };
+  return { accountId, privateKey, rpcUrl, policyContractId };
 }
 
 export function getGuardianSignerStatus(): GuardianSignerStatus {
@@ -44,9 +50,10 @@ export function getGuardianSignerStatus(): GuardianSignerStatus {
   if (mode && !process.env.GUARDIAN_ACCOUNT_ID?.trim()) missing.push("GUARDIAN_ACCOUNT_ID");
   if (mode && !process.env.GUARDIAN_PRIVATE_KEY?.trim()) missing.push("GUARDIAN_PRIVATE_KEY");
   const rpcUrl = process.env.NEAR_RPC_URL?.trim() || DEFAULT_TESTNET_RPC;
+  const policyContractId = process.env.POLICY_CONTRACT_ID?.trim() || null;
 
   if (!mode) {
-    return { configured: false, network: "testnet", accountId: null, rpcUrl, missing: [] };
+    return { configured: false, network: "testnet", accountId: null, policyContractId: null, rpcUrl, missing: [] };
   }
 
   if (!missing.length) readConfig();
@@ -54,6 +61,7 @@ export function getGuardianSignerStatus(): GuardianSignerStatus {
     configured: missing.length === 0,
     network: "testnet",
     accountId: process.env.GUARDIAN_ACCOUNT_ID?.trim() || null,
+    policyContractId,
     rpcUrl,
     missing,
   };
@@ -84,4 +92,33 @@ export async function sendGuardianTransfer(input: { recipient: string; amount: s
   const transactionHash = result.transaction?.hash;
   if (!transactionHash) throw new Error("NEAR RPC returned no transaction hash.");
   return { transactionHash, result };
+}
+
+/** Requests a transfer via the on-chain policy contract.
+ * If within limits and allowlisted, the contract executes the transfer;
+ * otherwise it queues the request on-chain in Pending status.
+ */
+export async function requestOnChainPolicyTransfer(input: { recipient: string; amount: string }) {
+  const config = readConfig();
+  if (!config?.policyContractId) {
+    throw new Error("POLICY_CONTRACT_ID must be configured to call on-chain policy.");
+  }
+  const account = getGuardianAccount();
+  const yocto = nearToYocto(input.amount as `${number}`);
+
+  const outcome = await account.callFunctionRaw({
+    contractId: config.policyContractId,
+    methodName: "request_transfer",
+    args: {
+      recipient: input.recipient,
+      amount: yocto.toString(),
+    },
+    gas: BigInt("30000000000000"), // 30 Tgas
+    deposit: BigInt(0),
+  });
+
+  return {
+    transactionHash: outcome.transaction?.hash,
+    outcome,
+  };
 }

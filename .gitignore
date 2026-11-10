@@ -12,3 +12,8 @@ data/
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
+# Rust build artifacts
+contracts/**/target/
+*.wasm
+deployment-testnet.json
+tsconfig.tsbuildinfo
