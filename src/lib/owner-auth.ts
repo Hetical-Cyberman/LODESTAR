@@ -11,7 +11,10 @@ export async function verifyOwnerDecisionSignature(input: {
   publicKey: string;
   signature: string;
   requestId: string;
-  decision: "approve" | "deny";
+  decision: "create" | "approve" | "deny";
+  kind?: "transfer" | "add_key" | "delete_key";
+  recipient?: string;
+  amount?: string;
 }) {
   const challenge = getOwnerChallenge(input.challengeId);
   if (!challenge || challenge.usedAt || Date.parse(challenge.expiresAt) <= Date.now()) {
@@ -19,6 +22,9 @@ export async function verifyOwnerDecisionSignature(input: {
   }
   if (challenge.requestId !== input.requestId || challenge.decision !== input.decision) {
     return { ok: false as const, error: "The signature is for a different request or decision." };
+  }
+  if (input.decision === "create" && (challenge.kind !== input.kind || challenge.requestRecipient !== input.recipient || challenge.requestAmount !== (input.amount ?? null))) {
+    return { ok: false as const, error: "The signed request does not match the submitted transfer or key details." };
   }
   const configuredOwner = process.env.OWNER_ACCOUNT_ID?.trim();
   if (!configuredOwner || input.accountId !== configuredOwner || input.accountId !== challenge.ownerAccountId) {
@@ -51,7 +57,15 @@ export async function verifyOwnerDecisionSignature(input: {
     if (!consumeOwnerChallenge(challenge.id, input.accountId)) {
       return { ok: false as const, error: "This challenge was already used or expired." };
     }
-    return { ok: true as const, requestId: challenge.requestId, decision: challenge.decision };
+    return {
+      ok: true as const,
+      requestId: challenge.requestId,
+      decision: challenge.decision,
+      kind: challenge.kind,
+      recipient: challenge.requestRecipient,
+      amount: challenge.requestAmount,
+      ownerAccountId: challenge.ownerAccountId,
+    };
   } catch {
     return { ok: false as const, error: "Could not verify the owner signature against NEAR testnet." };
   }

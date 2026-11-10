@@ -1,5 +1,5 @@
 export type RequestKind = "transfer" | "add_key" | "delete_key";
-export type RequestStatus = "pending" | "sent" | "denied";
+export type RequestStatus = "pending" | "processing" | "sent" | "denied";
 
 export type GuardRequest = {
   id: string;
@@ -9,6 +9,7 @@ export type GuardRequest = {
   status: RequestStatus;
   reason: string | null;
   anomalyScore: number;
+  transactionHash?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -34,6 +35,10 @@ export type GuardianSnapshot = {
   };
   requests: GuardRequest[];
   audit: AuditEvent[];
+  setupError?: string;
+  history?: { recipient: string; amount: number }[];
+  historyCount?: number;
+  knownRecipients?: string[];
 };
 
 export type NewRequestInput = {

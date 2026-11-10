@@ -2,7 +2,7 @@
 
 import { Buffer } from "buffer";
 import { setupWalletSelector, type WalletSelector } from "@near-wallet-selector/core";
-import { setupHotWallet } from "@near-wallet-selector/hot-wallet";
+import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
 import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
@@ -25,7 +25,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     let unsubscribe: (() => void) | undefined;
-    void setupWalletSelector({ network: "testnet", modules: [setupHotWallet()] }).then((nextSelector) => {
+    void setupWalletSelector({ network: "testnet", modules: [setupMeteorWallet()] }).then((nextSelector) => {
       if (!active) return;
       const nextModal = setupModal(nextSelector, {
         theme: "dark",
@@ -51,7 +51,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const connect = useCallback(() => modal?.show(), [modal]);
   const signMessage = useCallback(async (message: string, recipient: string, nonceBase64: string) => {
-    if (!selector || !accountId) throw new Error("Connect the owner’s HOT Wallet first.");
+    if (!selector || !accountId) throw new Error("Connect the owner’s Meteor Wallet first.");
     const wallet = await selector.wallet();
     const signed = await wallet.signMessage({ message, recipient, nonce: Buffer.from(nonceBase64, "base64") });
     if (!signed) throw new Error("The wallet did not return a signature.");

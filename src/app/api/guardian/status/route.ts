@@ -9,13 +9,13 @@ export async function GET() {
   return NextResponse.json(
     {
       ...status,
-      // This status endpoint only advertises configuration. It never exposes a key or sends a transaction.
-      signingEnabled: false,
+      // Status never exposes the signing key or submits a transaction.
+      signingEnabled: status.configured,
       message: status.configured
-        ? "Guardian testnet signer is configured. Signed owner decisions are recorded as mock activity; guarded transaction submission remains disabled."
-        : status.missing.length
-          ? "Guardian testnet signing is selected but missing required private environment configuration."
-          : "Running in mock mode. No NEAR network transactions are sent.",
+        ? "Guardian testnet signer configuration is complete. Only owner-authorized requests that pass Guardian rules can be submitted."
+        : status.issue ?? (status.missing.length
+          ? `Testnet configuration is incomplete: ${status.missing.join(", ")}.`
+          : "Running in mock mode. No NEAR network transactions are sent."),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

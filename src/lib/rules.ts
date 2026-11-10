@@ -32,7 +32,7 @@ function robustZScore(value: number, baseline: number[]): number {
 
 export function evaluateRequest(
   input: NewRequestInput,
-  context: { sentCountInWindow: number; historyAmounts: number[]; knownRecipients: string[] },
+  context: { sentCountInWindow: number; historyAmounts: number[]; knownRecipients: string[]; allowlist?: string[] },
 ): Evaluation {
   const reasons: string[] = [];
 
@@ -49,7 +49,7 @@ export function evaluateRequest(
   }
 
   const recipientIsKnown =
-    GUARDIAN_RULES.allowlist.includes(input.recipient) || context.knownRecipients.includes(input.recipient);
+    (context.allowlist ?? GUARDIAN_RULES.allowlist).includes(input.recipient) || context.knownRecipients.includes(input.recipient);
   if (!recipientIsKnown) {
     reasons.push("This wallet has not sent funds to this recipient before.");
   }
