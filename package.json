@@ -16,6 +16,7 @@
     "@near-wallet-selector/hot-wallet": "^10.1.4",
     "@near-wallet-selector/meteor-wallet": "^10.1.4",
     "@near-wallet-selector/modal-ui": "^10.1.4",
+    "@near-wallet-selector/my-near-wallet": "^10.1.4",
     "better-sqlite3": "^12.2.0",
     "buffer": "^6.0.3",
     "near-api-js": "^7.4.0",

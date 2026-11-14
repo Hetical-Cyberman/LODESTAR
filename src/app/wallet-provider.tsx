@@ -1,8 +1,10 @@
 "use client";
 
 import { Buffer } from "buffer";
-import { actionCreators, setupWalletSelector, type WalletSelector } from "@near-wallet-selector/core";
+import { actionCreators, setupWalletSelector, type InjectedWallet, type WalletModuleFactory, type WalletSelector } from "@near-wallet-selector/core";
 import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
+import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
+import { setupHotWallet } from "@near-wallet-selector/hot-wallet";
 import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
@@ -17,6 +19,20 @@ type WalletContextValue = {
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 
+const hotWalletFactory = setupHotWallet();
+const setupTelegramHotWallet: WalletModuleFactory<InjectedWallet> = async (options) => {
+  const wallet = await hotWalletFactory(options);
+  if (!wallet) return null;
+  return {
+    ...wallet,
+    metadata: {
+      ...wallet.metadata,
+      name: "HOT Wallet",
+      description: "Telegram Mini App supported",
+    },
+  };
+};
+
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [selector, setSelector] = useState<WalletSelector | null>(null);
   const [modal, setModal] = useState<WalletSelectorModal | null>(null);
@@ -26,7 +42,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     let unsubscribe: (() => void) | undefined;
-    void setupWalletSelector({ network: "testnet", modules: [setupMeteorWallet()] }).then((nextSelector) => {
+    void setupWalletSelector({ network: "testnet", modules: [setupMeteorWallet(), setupMyNearWallet({ walletUrl: "https://testnet.mynearwallet.com" }), setupTelegramHotWallet] }).then((nextSelector) => {
       if (!active) return;
       const nextModal = setupModal(nextSelector, {
         theme: "dark",
