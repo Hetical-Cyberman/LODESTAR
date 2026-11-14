@@ -198,7 +198,7 @@ impl GuardianPolicyContract {
     fn schedule_transfer(&self, request_id: u64, recipient: AccountId, amount: NearToken) {
         let callback_args = near_sdk::serde_json::to_vec(&serde_json::json!({ "request_id": request_id }))
             .expect("callback args serialize");
-        Promise::new(recipient)
+        let _transfer = Promise::new(recipient)
             .transfer(amount)
             .then(Promise::new(env::current_account_id()).function_call(
                 "on_transfer_complete".to_string(),
