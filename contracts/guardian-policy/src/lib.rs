@@ -2,7 +2,7 @@ use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedSet, Vector};
 use near_sdk::json_types::U128;
 use near_sdk::{
-    env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseResult,
+    env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise,
 };
 use serde::{Deserialize, Serialize};
 
@@ -132,7 +132,7 @@ impl GuardianPolicyContract {
         if is_allowlisted && !exceeds_cap {
             let req = QueuedRequest {
                 id: self.next_request_id,
-                recipient,
+                recipient: recipient.clone(),
                 amount,
                 reason: "Within amount cap and allowlisted".to_string(),
                 status: RequestStatus::Processing,
@@ -213,9 +213,9 @@ impl GuardianPolicyContract {
     pub fn on_transfer_complete(&mut self, request_id: u64) -> QueuedRequest {
         let mut req = self.request_by_id.get(&request_id).expect("Request not found");
         require!(req.status == RequestStatus::Processing, "Request is not processing");
-        req.status = match env::promise_result(0) {
-            PromiseResult::Successful(_) => RequestStatus::Executed,
-            PromiseResult::Failed => RequestStatus::Failed,
+        req.status = match env::promise_result_checked(0, 0) {
+            Ok(_) => RequestStatus::Executed,
+            Err(_) => RequestStatus::Failed,
         };
         req.updated_at = env::block_timestamp();
         self.request_by_id.insert(&request_id, &req);
