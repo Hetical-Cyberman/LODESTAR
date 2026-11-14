@@ -18,3 +18,4 @@ contracts/**/target/
 *.wasm
 deployment-testnet.json
 tsconfig.tsbuildinfo
+.vercel
