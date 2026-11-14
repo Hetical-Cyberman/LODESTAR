@@ -1,7 +1,7 @@
 "use client";
 
 import { Buffer } from "buffer";
-import { setupWalletSelector, type WalletSelector } from "@near-wallet-selector/core";
+import { actionCreators, setupWalletSelector, type WalletSelector } from "@near-wallet-selector/core";
 import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
 import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -12,6 +12,7 @@ type WalletContextValue = {
   ready: boolean;
   connect: () => void;
   signMessage: (message: string, recipient: string, nonceBase64: string) => Promise<SignedOwnerMessage>;
+  callContract: (contractId: string, methodName: string, args?: Record<string, string | number>) => Promise<void>;
 };
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -58,7 +59,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     return { accountId: signed.accountId, publicKey: signed.publicKey, signature: signed.signature };
   }, [selector, accountId]);
 
-  const value = useMemo(() => ({ accountId, ready, connect, signMessage }), [accountId, ready, connect, signMessage]);
+  const callContract = useCallback(async (contractId: string, methodName: string, args: Record<string, string | number> = {}) => {
+    if (!selector || !accountId) throw new Error("Connect the contract owner’s Meteor Wallet first.");
+    const wallet = await selector.wallet();
+    await wallet.signAndSendTransaction({
+      signerId: accountId,
+      receiverId: contractId,
+      actions: [actionCreators.functionCall(methodName, args, BigInt("50000000000000"), BigInt("0"))],
+    });
+  }, [selector, accountId]);
+
+  const value = useMemo(() => ({ accountId, ready, connect, signMessage, callContract }), [accountId, ready, connect, signMessage, callContract]);
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
 }
 

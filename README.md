@@ -1,24 +1,40 @@
-# Wallet Guardian Agent
+# Guardian | NEAR Wallet Protection
 
-A DAWNIK NEAR Hackathon prototype for reviewing unusual wallet requests before an owner decides what to do.
+Guardian is a NEAR Testnet policy console. In V2, contract storage is the source of truth for policy settings, the allowlist, transfer requests, and outcomes. The connected owner wallet submits requests and signs approve/deny and policy-management calls. The deployed policy contract is `guardian-policy-482207.testnet`; its owner is `wisejaguar3455.testnet`.
 
-## Current V1 implementation stage
+## V2 transaction model
 
-The dashboard supports mock mode and an explicitly configured testnet mode. In testnet mode, Meteor Wallet signs a one-use NEP-413 authorization tied to the exact request and decision. The server verifies the owner’s active full-access key, reads the protected account’s indexed transfer history, evaluates deterministic rules, and only then signs with the Guardian key. Safe transfers are submitted automatically after the owner authorizes the request; flagged transfers and all access-key changes wait for a second owner decision. Transaction hashes and decisions are persisted in SQLite. The owner account and Guardian account must be the same `.testnet` account, with separate owner-wallet and server-held Guardian full-access keys.
+- The policy contract holds the NEAR treasury. Transfers are sent from the contract account, not from a user's personal Meteor Wallet balance.
+- The contract immediately schedules a transfer only when the recipient is allowlisted and the amount is within the cap. Other requests remain on-chain as `Pending` until the owner approves or denies them.
+- The UI uses Meteor Wallet to call `request_transfer`, `approve_request`, `deny_request`, `add_allowlist`, `remove_allowlist`, and `set_guardian` on the contract.
+- `Processing` remains visible until the contract's private callback records `Executed` or `Failed` after NEAR resolves the transfer promise.
+- Contract request IDs and final statuses come from NEAR RPC. Local SQLite is for the local preview only; Vercel testnet mode does not rely on a local database.
+- This protects only funds held by the policy contract and calls routed through it. It does not monitor or protect transfers sent directly from personal wallets.
 
-Mock mode needs no secrets. For live testnet mode, copy `.env.example` to `.env.local` and configure `GUARDIAN_MODE=testnet`, the same protected `.testnet` account in `OWNER_ACCOUNT_ID` and `GUARDIAN_ACCOUNT_ID`, a separate active Guardian `ed25519:` full-access key for the server, `FASTNEAR_API_KEY` for testnet history, and optional `TRUSTED_RECIPIENTS`. Keep `.env.local` private. Never use a mainnet key or an account holding real funds. `/api/guardian/status` never returns a key.
+## Configure testnet locally or on Vercel
 
-## Current build status
+Copy `.env.example` to `.env.local` for local development, or add these variables in Vercel Project Settings → Environment Variables. Set them for the deployment environment and redeploy after editing:
 
-The dashboard defaults to **mock mode**. Seeded scenarios demonstrate deterministic request evaluation, hold, approve/deny, and a local SQLite audit trail. Mock approvals never send a blockchain transaction. Set the testnet environment variables in `.env.local` to enable NEAR testnet mode.
+```env
+GUARDIAN_MODE=testnet
+POLICY_CONTRACT_ID=guardian-policy-482207.testnet
+OWNER_ACCOUNT_ID=wisejaguar3455.testnet
+NEAR_RPC_URL=https://rpc.testnet.near.org
+GUARDIAN_ACCOUNT_ID=your-separate-agent.testnet
+GUARDIAN_PRIVATE_KEY=ed25519:<restricted-function-call-secret>
+```
 
-In live mode Meteor Wallet only identifies the owner and signs request or review decisions. The Guardian server is the only signer for transfers and key changes routed through this app.
+`GUARDIAN_ACCOUNT_ID` must be a separate testnet account. The configured key must be an active **FunctionCall** access key on that account, restricted to receiver `guardian-policy-482207.testnet`, method `request_transfer` only, with a finite allowance no greater than 1 NEAR. The server rejects full-access keys and keys with a broader permission. Store the secret only in local `.env.local` or Vercel's encrypted environment settings; never commit it or put it in a `NEXT_PUBLIC_` variable.
 
-## Requirements
+The deployed contract currently has its own account as `guardian_id`. After configuring the agent account and starting the app, connect `wisejaguar3455.testnet` and choose **Authorize Guardian account**. This calls the contract's owner-only `set_guardian` method. The dashboard displays the current contract Guardian so you can confirm it matches.
 
-- Node.js 20.9 or newer
-- npm
-- Meteor Wallet with the configured owner testnet account to sign live testnet requests and review decisions
+Fund the policy contract account separately with testnet NEAR before trying transfers. The server agent account also needs a small balance for function-call gas. Use only testnet funds.
+
+## Contract deployment and callback update
+
+The Rust source has been updated to report `Processing` first and record `Executed`/`Failed` from the transfer callback. The currently deployed contract must be upgraded by an authorized contract deployer before that callback behavior is live on-chain. This repository does not deploy or upgrade the contract automatically. Do not put a contract-account full-access key in Vercel.
+
+`deploy.js` is now a read-only verification script; it no longer creates accounts, broadcasts deployments, or writes private keys. Contract upgrades must be done by the authorized deployer using a secure local signing method, after reviewing the Rust change and building the WASM.
 
 ## Run locally
 
@@ -27,45 +43,16 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:3000>. The first API request creates `data/guardian.sqlite` and seeds mock history. No wallet, environment variables, or network access are needed to use the dashboard and mock scenarios.
+Use `GUARDIAN_MODE=mock` only for a local interface preview. Sample scenarios and SQLite records are not on-chain. For Vercel, configure `GUARDIAN_MODE=testnet`; production refuses mock-only storage.
 
-To use a different local SQLite path, copy `.env.example` to `.env.local` and set `DATABASE_PATH`. Keep `.env.local` private. The database is ignored by Git.
+## Verification commands
 
-## Try the mock dashboard
+```bash
+npm run typecheck
+npm run build
+cd contracts/guardian-policy
+cargo test --lib
+cargo test --test test_lifecycle
+```
 
-- **Normal payment**: a small transfer to a trusted recipient passes the configured rules and is recorded as mock activity.
-- **Large transfer**: an 82 NEAR request is held because it exceeds the 5 NEAR cap.
-- **New recipient**: a first-time recipient request is held for review.
-- **Key change**: adding or removing an access key is always held in the mock flow.
-- **Transfer burst**: rapid small requests trigger the velocity rule.
-
-Approving a mock request records a local decision only; it does not send a blockchain transaction.
-
-## Testnet behavior
-
-Live mode reads up to 100 recent successful account transactions from FastNear’s testnet Transactions API, then retrieves their action details. History API failures stop new requests rather than falling back to seeded mock data. A passed transfer is signed and sent by the Guardian key. Transfers over the cap, new recipients, bursts, anomalies, and key changes stay pending until a second owner signature. The Guardian signing key cannot be deleted through this flow. If RPC confirmation is interrupted after broadcast, the request stays locked with its transaction hash so it cannot be accidentally submitted a second time. No mainnet endpoint or key is accepted.
-
-## Protection behavior
-
-The mock dashboard applies deterministic server-side rules:
-
-- Amount cap: hold transfers above 5 NEAR.
-- New recipient: hold a recipient missing from the demo trusted list and seeded history.
-- Burst: hold a request when more than 3 requests fall within 60 seconds.
-- Anomaly score: use a robust z-score when at least 4 history amounts exist; hold above 3.5.
-- Key change: always hold adding or removing an access key in mock mode.
-
-No model makes an allow/hold decision.
-
-## Project boundary
-
-The Guardian reviews requests routed through the dashboard; it does not monitor wallet activity in the background or protect transfers initiated elsewhere. SQLite is intended for the local prototype; hosted deployment needs persistent storage or a managed database before it can preserve its queue and audit history across instances.
-
-## Project layout
-
-- `src/app/page.tsx`: dashboard, mock scenarios, activity, and rules.
-- `src/app/api/`: mock/testnet snapshots, owner challenges, request creation, and decision endpoints.
-- `src/lib/rules.ts`: deterministic mock rule evaluation and anomaly score.
-- `src/lib/near-history.ts`: FastNear testnet transfer history for risk checks.
-- `src/lib/guardian-signer.ts`: testnet-only balance reads and Guardian transaction signing.
-- `src/lib/db.ts`: SQLite storage, request state, and audit events.
+The lifecycle test requires the `wasm32-unknown-unknown` target and a working NEAR Sandbox setup. Before using Vercel, confirm its variables are set and the contract's on-chain `owner_id`, `guardian_id`, policy cap, and treasury balance are correct.

@@ -5,6 +5,7 @@ dist/
 coverage/
 .env*
 !.env.example
+.guardian-fc-key.json
 data/
 *.sqlite
 *.sqlite-shm

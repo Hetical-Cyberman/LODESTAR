@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { createOwnerDecisionChallenge, createOwnerRequestChallenge } from "@/lib/db";
 import { isTestnetAccountId, validateEd25519PublicKey } from "@/lib/guardian-signer";
 import type { NewRequestInput } from "@/lib/types";
 
@@ -7,6 +6,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  if (process.env.GUARDIAN_MODE === "testnet" || process.env.VERCEL) {
+    return NextResponse.json({ error: "Testnet actions are signed as NEAR transactions by the connected owner wallet; no off-chain challenge is used." }, { status: 409 });
+  }
+  const { createOwnerDecisionChallenge, createOwnerRequestChallenge } = await import("@/lib/db");
   let body: { requestId?: unknown; decision?: unknown; kind?: unknown; recipient?: unknown; amount?: unknown };
   try {
     body = await request.json();

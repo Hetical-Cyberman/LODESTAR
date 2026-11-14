@@ -2,7 +2,7 @@ use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedSet, Vector};
 use near_sdk::json_types::U128;
 use near_sdk::{
-    env, near, require, AccountId, NearToken, PanicOnDefault, Promise,
+    env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,9 +12,11 @@ use serde::{Deserialize, Serialize};
 #[serde(crate = "near_sdk::serde")]
 pub enum RequestStatus {
     Pending,
+    Processing,
     Approved,
     Denied,
     Executed,
+    Failed,
 }
 
 /// A request record stored in the queue.
@@ -70,6 +72,10 @@ impl GuardianPolicyContract {
         }
     }
 
+    pub fn get_contract_version(&self) -> String {
+        "2.1.0".to_string()
+    }
+
     /// Helper assertion ensuring caller is owner.
     fn assert_owner(&self) {
         require!(
@@ -112,28 +118,28 @@ impl GuardianPolicyContract {
     // --- Transfer & Queue Operations ---
 
     /// Evaluates transfer against policies:
-    /// 1. If recipient is allowlisted AND amount <= amount_cap: executes immediately.
+    /// 1. If recipient is allowlisted AND amount <= amount_cap: submits immediately.
     /// 2. If above cap or not allowlisted: places into pending queue with reason.
     pub fn request_transfer(&mut self, recipient: AccountId, amount: U128) -> QueuedRequest {
         self.assert_authorized();
+        require!(amount.0 > 0, "Transfer amount must be greater than zero");
         let token_amount = NearToken::from_yoctonear(amount.0);
         let is_allowlisted = self.allowlist.contains(&recipient);
         let exceeds_cap = token_amount > self.amount_cap;
 
         if is_allowlisted && !exceeds_cap {
-            // Immediate transfer execution
-            let _ = Promise::new(recipient.clone()).transfer(token_amount);
             let req = QueuedRequest {
                 id: self.next_request_id,
                 recipient,
                 amount,
                 reason: "Within amount cap and allowlisted".to_string(),
-                status: RequestStatus::Executed,
+                status: RequestStatus::Processing,
                 created_at: env::block_timestamp(),
                 updated_at: env::block_timestamp(),
             };
             self.requests.push(&req);
             self.request_by_id.insert(&self.next_request_id, &req);
+            self.schedule_transfer(req.id, recipient, token_amount);
             self.next_request_id += 1;
             return req;
         }
@@ -166,7 +172,7 @@ impl GuardianPolicyContract {
         req
     }
 
-    /// Owner approves a held pending request, executing the transfer.
+    /// Owner approves a held pending request, scheduling the transfer.
     pub fn approve_request(&mut self, request_id: u64) -> QueuedRequest {
         self.assert_owner();
         let mut req = self
@@ -176,25 +182,50 @@ impl GuardianPolicyContract {
         require!(req.status == RequestStatus::Pending, "Request is not pending");
 
         let token_amount = NearToken::from_yoctonear(req.amount.0);
-        let _ = Promise::new(req.recipient.clone()).transfer(token_amount);
-
-        req.status = RequestStatus::Approved;
+        req.status = RequestStatus::Processing;
         req.updated_at = env::block_timestamp();
         self.request_by_id.insert(&request_id, &req);
 
-        // Update in vector
-        for i in 0..self.requests.len() {
-            if let Some(mut r) = self.requests.get(i) {
-                if r.id == request_id {
-                    r.status = RequestStatus::Approved;
-                    r.updated_at = req.updated_at;
-                    self.requests.replace(i, &r);
-                    break;
-                }
-            }
-        }
+        self.update_request_in_vector(&req);
+
+        self.schedule_transfer(req.id, req.recipient.clone(), token_amount);
 
         req
+    }
+
+    fn schedule_transfer(&self, request_id: u64, recipient: AccountId, amount: NearToken) {
+        let callback_args = near_sdk::serde_json::to_vec(&serde_json::json!({ "request_id": request_id }))
+            .expect("callback args serialize");
+        Promise::new(recipient)
+            .transfer(amount)
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_transfer_complete".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(10),
+            ));
+    }
+
+    /// Finalizes the request only after the NEAR transfer receipt resolves.
+    #[private]
+    pub fn on_transfer_complete(&mut self, request_id: u64) -> QueuedRequest {
+        let mut req = self.request_by_id.get(&request_id).expect("Request not found");
+        require!(req.status == RequestStatus::Processing, "Request is not processing");
+        req.status = match env::promise_result(0) {
+            PromiseResult::Successful(_) => RequestStatus::Executed,
+            PromiseResult::Failed => RequestStatus::Failed,
+        };
+        req.updated_at = env::block_timestamp();
+        self.request_by_id.insert(&request_id, &req);
+        self.update_request_in_vector(&req);
+        req
+    }
+
+    fn update_request_in_vector(&mut self, req: &QueuedRequest) {
+        let index = req.id.saturating_sub(1);
+        if index < self.requests.len() {
+            self.requests.replace(index, req);
+        }
     }
 
     /// Owner denies a held pending request.
@@ -210,16 +241,7 @@ impl GuardianPolicyContract {
         req.updated_at = env::block_timestamp();
         self.request_by_id.insert(&request_id, &req);
 
-        for i in 0..self.requests.len() {
-            if let Some(mut r) = self.requests.get(i) {
-                if r.id == request_id {
-                    r.status = RequestStatus::Denied;
-                    r.updated_at = req.updated_at;
-                    self.requests.replace(i, &r);
-                    break;
-                }
-            }
-        }
+        self.update_request_in_vector(&req);
 
         req
     }
@@ -246,6 +268,10 @@ impl GuardianPolicyContract {
 
     pub fn get_request(&self, request_id: u64) -> Option<QueuedRequest> {
         self.request_by_id.get(&request_id)
+    }
+
+    pub fn get_request_count(&self) -> u64 {
+        self.requests.len()
     }
 
     pub fn get_requests(&self, from_index: Option<u64>, limit: Option<u64>) -> Vec<QueuedRequest> {
@@ -354,7 +380,7 @@ mod tests {
         // 2. Owner approves
         testing_env!(context.predecessor_account_id(owner.clone()).build());
         let approved = contract.approve_request(req.id);
-        assert_eq!(approved.status, RequestStatus::Approved);
+        assert_eq!(approved.status, RequestStatus::Processing);
         assert_eq!(contract.get_pending_requests().len(), 0);
     }
 

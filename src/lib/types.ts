@@ -1,5 +1,5 @@
 export type RequestKind = "transfer" | "add_key" | "delete_key";
-export type RequestStatus = "pending" | "processing" | "sent" | "denied";
+export type RequestStatus = "pending" | "processing" | "sent" | "denied" | "failed";
 
 export type GuardRequest = {
   id: string;
@@ -25,6 +25,11 @@ export type AuditEvent = {
 export type GuardianSnapshot = {
   mode: "mock" | "testnet";
   accountId: string;
+  ownerAccountId?: string;
+  guardianAccountId?: string;
+  contractGuardianId?: string;
+  contractVersion?: string | null;
+  callbackReady?: boolean;
   balance: string;
   rules: {
     amountCap: number;

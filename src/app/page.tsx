@@ -21,6 +21,10 @@ function shortId(value: string) {
   return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
+function validTestnetAccount(value: string) {
+  return /^[a-z0-9._-]{2,64}$/.test(value) && value.endsWith(".testnet");
+}
+
 function kindLabel(request: GuardRequest) {
   if (request.kind === "add_key") return "Add access key";
   if (request.kind === "delete_key") return "Remove access key";
@@ -41,8 +45,8 @@ export default function Home() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [activeView, setActiveView] = useState<"overview" | "activity" | "rules">("overview");
-  const [keyRequestKind, setKeyRequestKind] = useState<"add_key" | "delete_key">("add_key");
-  const [keyRequest, setKeyRequest] = useState("");
+  const [transferRecipient, setTransferRecipient] = useState("");
+  const [transferAmount, setTransferAmount] = useState("");
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/snapshot", { cache: "no-store" });
@@ -68,33 +72,39 @@ export default function Home() {
     denied: snapshot?.requests.filter((request) => request.status === "denied").length ?? 0,
   }), [snapshot]);
 
+  useEffect(() => {
+    if (snapshot?.mode !== "testnet" || !snapshot.requests.some((request) => request.status === "processing")) return;
+    const timer = window.setInterval(() => { void refresh(); }, 4500);
+    return () => window.clearInterval(timer);
+  }, [snapshot, refresh]);
+
   async function submit(input: NewRequestInput) {
     try {
       if (snapshot?.mode === "testnet" && snapshot.setupError) throw new Error(snapshot.setupError);
-      let authorized: Record<string, string> = {};
-      if (snapshot?.mode === "testnet" || ownerWallet.accountId) {
-        if (!ownerWallet.accountId) throw new Error("Connect the configured owner’s Meteor Wallet before creating a testnet request.");
-        const challengeResponse = await fetch("/api/guardian/challenges", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ decision: "create", ...input }),
-        });
-        const challenge = await challengeResponse.json();
-        if (!challengeResponse.ok) throw new Error(challenge.error ?? "Could not prepare owner authorization.");
-        const signed = await ownerWallet.signMessage(challenge.message, challenge.recipient, challenge.nonce);
-        authorized = { requestId: challenge.requestId, challengeId: challenge.id, ...signed };
+      if (snapshot?.mode === "testnet") {
+        if (input.kind !== "transfer") throw new Error("The on-chain policy contract currently supports NEAR transfers only.");
+        if (!snapshot.callbackReady) throw new Error("The deployed policy contract needs the callback-enabled V2.1 upgrade before transfers can be submitted safely.");
+        if (!ownerWallet.accountId) throw new Error("Connect the contract owner’s Meteor Wallet first.");
+        if (ownerWallet.accountId !== snapshot.ownerAccountId) throw new Error(`Connect ${snapshot.ownerAccountId} to submit contract requests.`);
+        if (!validTestnetAccount(input.recipient)) throw new Error("Enter a valid NEAR testnet recipient account.");
+        const [whole, fraction = ""] = (input.amount ?? "").split(".");
+        if (!/^\d+$/.test(whole) || fraction.length > 24 || !/^\d*$/.test(fraction)) throw new Error("Enter a valid NEAR amount.");
+        const yoctoValue = BigInt(whole) * (BigInt("10") ** BigInt("24")) + BigInt(fraction.padEnd(24, "0") || "0");
+        if (yoctoValue <= BigInt("0")) throw new Error("Transfer amount must be greater than zero.");
+        const yoctoAmount = yoctoValue.toString();
+        await ownerWallet.callContract(snapshot.accountId, "request_transfer", { recipient: input.recipient, amount: yoctoAmount });
+        await refresh();
+        setToast({ tone: "success", message: "Request recorded by the NEAR policy contract. Any transfer is awaiting its on-chain result." });
+        return;
       }
       const response = await fetch("/api/requests", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...input, ...authorized }),
+        body: JSON.stringify(input),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Request could not be processed.");
       await refresh();
-      setToast({ tone: "success", message: snapshot?.mode === "testnet"
-        ? payload.status === "sent" ? `Guardian sent the testnet transaction${payload.transactionHash ? ` · ${payload.transactionHash.slice(0, 10)}…` : ""}.`
-          : payload.status === "processing" ? `Submission status is still confirming${payload.transactionHash ? ` · tx ${payload.transactionHash.slice(0, 10)}…` : ""}. Do not retry it.`
-            : "Guardian held the request for owner review; no transaction was sent."
-        : payload.status === "pending" ? "Unusual activity held for review." : "Rules passed. Mock transaction recorded." });
+      setToast({ tone: "success", message: payload.status === "pending" ? "Unusual activity held for review." : "Rules passed. Preview transaction recorded locally." });
     } catch (error) {
       setToast({ tone: "error", message: error instanceof Error ? error.message : "Something went wrong." });
     }
@@ -103,31 +113,24 @@ export default function Home() {
   async function decide(id: string, decision: "approve" | "deny") {
     setBusyId(id);
     try {
-      let authorization = {};
-      if (snapshot?.mode === "testnet" && snapshot.setupError) throw new Error(snapshot.setupError);
-      if (snapshot?.mode === "testnet" || ownerWallet.accountId) {
-        if (!ownerWallet.accountId) throw new Error("Connect the configured owner’s Meteor Wallet to authorize this decision.");
-        const challengeResponse = await fetch("/api/guardian/challenges", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ requestId: id, decision }),
-        });
-        const challenge = await challengeResponse.json();
-        if (!challengeResponse.ok) throw new Error(challenge.error ?? "Could not prepare owner approval.");
-        const signed = await ownerWallet.signMessage(challenge.message, challenge.recipient, challenge.nonce);
-        authorization = { challengeId: challenge.id, ...signed };
+      if (snapshot?.mode === "testnet") {
+        if (snapshot.setupError) throw new Error(snapshot.setupError);
+        if (!snapshot.callbackReady) throw new Error("The deployed policy contract needs the callback-enabled V2.1 upgrade before approvals can be submitted safely.");
+        if (!ownerWallet.accountId) throw new Error("Connect the contract owner’s Meteor Wallet first.");
+        if (ownerWallet.accountId !== snapshot.ownerAccountId) throw new Error(`Only ${snapshot.ownerAccountId} can decide this request.`);
+        await ownerWallet.callContract(snapshot.accountId, decision === "approve" ? "approve_request" : "deny_request", { request_id: Number(id) });
+        await refresh();
+        setToast({ tone: "success", message: decision === "approve" ? "Approval submitted on-chain. The request will update after NEAR confirms the transfer." : "Denial recorded by the NEAR policy contract." });
+        return;
       }
       const response = await fetch(`/api/requests/${id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision, ...authorization }),
+        body: JSON.stringify({ decision }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Decision could not be saved.");
       await refresh();
-      setToast({ tone: payload.status === "processing" ? "error" : "success", message: ownerWallet.accountId
-        ? snapshot?.mode === "testnet"
-          ? decision === "approve" ? payload.status === "sent" ? "Owner approved. Guardian submitted the testnet request." : `Owner approved. Submission needs confirmation${payload.transactionHash ? ` · tx ${payload.transactionHash.slice(0, 10)}…` : ""}. Do not retry.` : "Request denied; Guardian did not submit it."
-          : `Owner signature verified. ${decision === "approve" ? "Mock request approved" : "Mock request denied"}; no transaction was sent.`
-        : decision === "approve" ? "Approved in mock mode." : "Request denied." });
+      setToast({ tone: "success", message: decision === "approve" ? "Approved in local preview. No on-chain transaction was sent." : "Request denied in local preview." });
     } catch (error) {
       setToast({ tone: "error", message: error instanceof Error ? error.message : "Something went wrong." });
     } finally {
@@ -174,56 +177,58 @@ export default function Home() {
             <strong>Built to pause<br />before it moves.</strong>
             <p>Your guardian checks every request against your rules.</p>
           </div>
-          <div className="profile-row"><span className="avatar">D</span><span><strong>DAWNIK Demo</strong><small>Testnet workspace</small></span><span className="more">···</span></div>
+          <div className="profile-row"><span className="avatar">{ownerWallet.accountId?.slice(0, 1).toUpperCase() ?? "G"}</span><span><strong>{ownerWallet.accountId ?? "Guardian workspace"}</strong><small>{snapshot?.mode === "testnet" ? "NEAR Testnet owner" : "Local preview"}</small></span><span className="more">···</span></div>
         </div>
       </aside>
 
       <section className="main-panel" id="top">
         <header className="topbar">
           <div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{activeView === "overview" ? "Overview" : activeView === "activity" ? "Activity" : "Protection rules"}</strong></div>
-          <div className="topbar-right"><span className="mode-pill"><span className="mode-light" />{snapshot?.mode === "testnet" ? "NEAR TESTNET" : "MOCK DASHBOARD"}</span><button className="avatar avatar--small" aria-label="Demo profile">D</button></div>
+          <div className="topbar-right"><span className="mode-pill"><span className="mode-light" />{snapshot?.mode === "testnet" ? "NEAR TESTNET · ON-CHAIN" : "LOCAL PREVIEW"}</span><button className="avatar avatar--small" aria-label="Account profile">{ownerWallet.accountId?.slice(0, 1).toUpperCase() ?? "D"}</button></div>
         </header>
 
         <div className="content">
           <div className="page-heading">
-            <div><div className="eyebrow"><span className="eyebrow-line" />NEAR TESTNET · WALLET GUARDIAN</div><h1>{activeView === "overview" ? "Your wallet, watched." : activeView === "activity" ? "Activity & decisions." : "Protection rules."}</h1><p className="page-subtitle">{activeView === "overview" ? "Unusual spending pauses here until you say so." : activeView === "activity" ? "A clear record of what passed, paused, or was denied." : "Every request is checked before the Guardian lets it through."}</p></div>
-            <button className="connect-button" onClick={ownerWallet.connect} disabled={!ownerWallet.ready} title="Connect the owner’s NEAR testnet account with Meteor Wallet"><span className="connect-dot" />{ownerWallet.accountId ?? (ownerWallet.ready ? "Connect owner wallet" : "Loading wallet…")}<ChevronDown /></button>
+            <div><div className="eyebrow"><span className="eyebrow-line" />{snapshot?.mode === "testnet" ? "V2 POLICY CONSOLE · NEAR TESTNET" : "LOCAL PREVIEW · NO CHAIN ACTIVITY"}</div><h1>{activeView === "overview" ? "Treasury protection." : activeView === "activity" ? "On-chain activity." : "Policy controls."}</h1><p className="page-subtitle">{activeView === "overview" ? "Review policy decisions and transfers secured by the NEAR contract." : activeView === "activity" ? "A live record of requests and outcomes read from the policy contract." : "Manage the contract’s amount threshold and trusted recipients."}</p></div>
+            <button className="connect-button" onClick={ownerWallet.connect} disabled={!ownerWallet.ready} title="Connect the deployed contract owner account"><span className="connect-dot" />{ownerWallet.accountId ?? (ownerWallet.ready ? "Connect owner wallet" : "Loading wallet…")}<ChevronDown /></button>
           </div>
 
-          {snapshot?.mode === "testnet" && <div className="live-notice"><strong>Guardian testnet signer active.</strong> Meteor Wallet signs request and review approvals; only the Guardian server key sends transactions. {snapshot.setupError && <span>{snapshot.setupError}</span>}</div>}
+          {snapshot?.mode === "testnet" && <div className={`live-notice ${snapshot.setupError || !snapshot.callbackReady ? "live-notice--error" : ""}`}><strong>Policy contract · {snapshot.accountId}</strong><span>Owner: {snapshot.ownerAccountId} · Guardian agent: {snapshot.guardianAccountId}</span>{snapshot.contractGuardianId !== snapshot.guardianAccountId && <div className="guardian-config"><span>Contract currently authorizes <b>{snapshot.contractGuardianId}</b>. Update it to the restricted agent account before enabling agent requests.</span><button onClick={() => void ownerWallet.callContract(snapshot.accountId, "set_guardian", { guardian_id: snapshot.guardianAccountId! }).then(() => refresh()).catch((error) => setToast({ tone: "error", message: error instanceof Error ? error.message : "Could not update contract Guardian." }))} disabled={ownerWallet.accountId !== snapshot.ownerAccountId}>Authorize Guardian account</button></div>}{!snapshot.callbackReady && <span>Contract upgrade required: transfer outcomes must be finalized by the V2.1 callback. Requests and approvals are disabled until the upgraded contract is deployed.</span>}{snapshot.setupError && <span>{snapshot.setupError}</span>}</div>}
 
           {activeView === "overview" && <>
             <section className="hero-card">
               <div className="hero-pattern" aria-hidden="true" />
-              <div className="hero-copy"><span className="hero-kicker"><span className="pulse-dot" />GUARDIAN IS ACTIVE</span><h2>Your wallet has<br /><em>room to breathe.</em></h2><p>Every payment is checked. Anything unusual waits here for your approval.</p><button className="hero-action" onClick={() => setActiveView("activity")}>Review activity <ArrowRight /></button></div>
+              <div className="hero-copy"><span className="hero-kicker"><span className="pulse-dot" />{snapshot?.mode === "testnet" ? "POLICY CONTRACT CONNECTED" : "LOCAL PREVIEW"}</span><h2>Policy enforced<br /><em>on NEAR.</em></h2><p>{snapshot?.mode === "testnet" ? "The contract evaluates every transfer. Held requests stay on-chain until the owner decides." : "Preview the policy experience without sending transactions."}</p><button className="hero-action" onClick={() => setActiveView("activity")}>View on-chain activity <ArrowRight /></button></div>
               <div className="hero-illustration" aria-hidden="true"><span className="orbit orbit--one" /><span className="orbit orbit--two" /><span className="orbit orbit--three" /><span className="guardian-orb"><ShieldGlyph /></span><span className="orb-chip orb-chip--one"><CheckGlyph /></span><span className="orb-chip orb-chip--two"><LockGlyph /></span></div>
-              <div className="hero-foot"><span>PROTECTED ACCOUNT</span><strong>{snapshot?.accountId ?? "guardian-demo.testnet"}</strong><span className="hero-foot-right">LAST CHECK <strong>Just now</strong></span></div>
+              <div className="hero-foot"><span>POLICY CONTRACT</span><strong>{snapshot?.accountId ?? "—"}</strong><span className="hero-foot-right">NETWORK <strong>{snapshot?.mode === "testnet" ? "NEAR Testnet" : "Local"}</strong></span></div>
             </section>
 
             <div className="stat-grid">
-              <article className="stat-card"><div className="stat-top"><span>{snapshot?.mode === "testnet" ? "TESTNET BALANCE" : "DEMO BALANCE"}</span><span className="stat-icon stat-icon--lavender"><CoinGlyph /></span></div><div className="stat-number">{snapshot ? snapshot.balance : "—"}<span> NEAR</span></div><div className="stat-foot"><span className="mini-dot mini-dot--lavender" />{snapshot?.mode === "testnet" ? "Live account balance" : "Mock balance · no funds at risk"}</div></article>
+              <article className="stat-card"><div className="stat-top"><span>{snapshot?.mode === "testnet" ? "CONTRACT TREASURY" : "LOCAL PREVIEW BALANCE"}</span><span className="stat-icon stat-icon--lavender"><CoinGlyph /></span></div><div className="stat-number">{snapshot ? snapshot.balance : "—"}<span> NEAR</span></div><div className="stat-foot"><span className="mini-dot mini-dot--lavender" />{snapshot?.mode === "testnet" ? "Funds held by policy contract" : "Preview only · no real funds"}</div></article>
               <article className="stat-card"><div className="stat-top"><span>HELD FOR REVIEW</span><span className="stat-icon stat-icon--amber"><PauseGlyph /></span></div><div className="stat-number">{totals.held}<span> requests</span></div><div className="stat-foot"><span className="mini-dot mini-dot--amber" />Waiting for your decision</div></article>
               <article className="stat-card"><div className="stat-top"><span>{snapshot?.mode === "testnet" ? "SUBMITTED" : "MOCK PASSED"}</span><span className="stat-icon stat-icon--green"><CheckGlyph /></span></div><div className="stat-number">{totals.passed}<span> requests</span></div><div className="stat-foot"><span className="mini-dot mini-dot--green" />{snapshot?.mode === "testnet" ? "Confirmed on NEAR testnet" : "No rules were triggered"}</div></article>
             </div>
 
             <div className="section-head"><div><h2>Needs your attention <span className="section-count">{pending.length}</span></h2><p>These requests are waiting for your approval.</p></div><button className="text-button" onClick={() => setActiveView("activity")}>View all activity <ArrowRight /></button></div>
             <div className="request-list">
-              {loading ? <div className="empty-state">Loading Guardian…</div> : pending.length ? pending.slice(0, 3).map((request) => <RequestCard key={request.id} request={request} busy={busyId === request.id} live={snapshot?.mode === "testnet"} onDecision={decide} />) : <div className="empty-state empty-state--clear"><span className="clear-check"><CheckGlyph /></span><strong>Nothing waiting on you</strong><span>New requests will appear here if a rule is triggered.</span></div>}
+              {loading ? <div className="empty-state">Loading policy contract…</div> : pending.length ? pending.slice(0, 3).map((request) => <RequestCard key={request.id} request={request} busy={busyId === request.id} live={snapshot?.mode === "testnet"} locked={snapshot?.mode === "testnet" && !snapshot.callbackReady} onDecision={decide} />) : <div className="empty-state empty-state--clear"><span className="clear-check"><CheckGlyph /></span><strong>Nothing waiting on you</strong><span>New contract requests will appear here.</span></div>}
             </div>
-            <div className="section-head scenarios-head"><div><h2>{snapshot?.mode === "testnet" ? "Submit an owner-authorized request" : "Try a demo scenario"}</h2><p>{snapshot?.mode === "testnet" ? "Meteor Wallet will sign this exact request. Requests that pass rules may be sent by the Guardian immediately." : "See how Guardian handles a request. All activity stays in mock mode."}</p></div>{snapshot?.mode !== "testnet" && <button className="burst-button" onClick={() => void runBurst()}><BurstGlyph />Simulate transfer burst</button>}</div>
-            <div className="scenario-grid">{scenarios.filter((scenario) => snapshot?.mode !== "testnet" || scenario.input.kind === "transfer").map((scenario) => <button className="scenario-card" key={scenario.title} onClick={() => void submit(scenario.input)} disabled={snapshot?.mode === "testnet" && (!ownerWallet.accountId || Boolean(snapshot.setupError))}><span className="scenario-arrow"><ArrowUpRight /></span><strong>{scenario.title}</strong><small>{scenario.caption}</small></button>)}</div>
-            {snapshot?.mode === "testnet" && <form className="key-request-form" onSubmit={(event) => { event.preventDefault(); void submit({ kind: keyRequestKind, recipient: keyRequest.trim() }); }}>
-              <strong>Guard an access-key change</strong><p>Key changes are always held. Approval submits this exact change with the Guardian key.</p>
-              <select value={keyRequestKind} onChange={(event) => setKeyRequestKind(event.target.value as "add_key" | "delete_key")}><option value="add_key">Add full-access key</option><option value="delete_key">Remove key</option></select>
-              <input value={keyRequest} onChange={(event) => setKeyRequest(event.target.value)} placeholder="ed25519:…" autoComplete="off" />
-              <button type="submit" disabled={!ownerWallet.accountId || Boolean(snapshot.setupError)}>Sign request</button>
-            </form>}
+            <div className="section-head scenarios-head"><div><h2>{snapshot?.mode === "testnet" ? "Create a protected transfer" : "Local preview"}</h2><p>{snapshot?.mode === "testnet" ? "Your connected owner wallet calls the policy contract. Funds are paid from the contract balance." : "Use the sample cases to explore the interface. Preview data is stored locally."}</p></div>{snapshot?.mode !== "testnet" && <button className="burst-button" onClick={() => void runBurst()}><BurstGlyph />Simulate transfer burst</button>}</div>
+            {snapshot?.mode === "testnet" ? <form className="testnet-form" onSubmit={(event) => { event.preventDefault(); void submit({ kind: "transfer", recipient: transferRecipient.trim(), amount: transferAmount.trim() }); }}>
+              <label>Recipient account<input value={transferRecipient} onChange={(event) => setTransferRecipient(event.target.value)} placeholder="recipient.testnet" autoComplete="off" required /></label>
+              <label>Amount in NEAR<input value={transferAmount} onChange={(event) => setTransferAmount(event.target.value)} placeholder="0.25" inputMode="decimal" required /></label>
+              <button className="testnet-review" type="submit" disabled={!ownerWallet.accountId || ownerWallet.accountId !== snapshot.ownerAccountId || Boolean(snapshot.setupError) || !snapshot.callbackReady}>Review in Meteor Wallet</button>
+            </form> : <div className="scenario-grid">{scenarios.map((scenario) => <button className="scenario-card" key={scenario.title} onClick={() => void submit(scenario.input)}><span className="scenario-arrow"><ArrowUpRight /></span><strong>{scenario.title}</strong><small>{scenario.caption}</small></button>)}</div>}
           </>}
 
           {activeView === "activity" && <ActivityView snapshot={snapshot} loading={loading} busyId={busyId} onDecision={decide} />}
-          {activeView === "rules" && <RulesView snapshot={snapshot} />}
+          {activeView === "rules" && <RulesView snapshot={snapshot} live={snapshot?.mode === "testnet"} ownerReady={ownerWallet.accountId === snapshot?.ownerAccountId} onAllowlist={async (method, accountId) => {
+            if (!snapshot) return;
+            await ownerWallet.callContract(snapshot.accountId, method, { account_id: accountId });
+            await refresh();
+          }} />}
 
-          <footer className="footer"><span><span className="footer-lock"><LockGlyph /></span>Protected by deterministic rules</span><span>DEMO RULES · TESTNET TRANSFERS NEED WALLET SIGNATURE</span></footer>
+          <footer className="footer"><span><span className="footer-lock"><LockGlyph /></span>{snapshot?.mode === "testnet" ? "Policy and request state read from NEAR" : "Local preview · no chain activity"}</span><span>{snapshot?.mode === "testnet" ? "OWNER ACTIONS REQUIRE METEOR WALLET" : "DEMO DATA IS LOCAL ONLY"}</span></footer>
         </div>
       </section>
       {toast && <div className={`toast toast--${toast.tone}`} role="status"><span>{toast.tone === "success" ? "✓" : "!"}</span>{toast.message}</div>}
@@ -231,27 +236,48 @@ export default function Home() {
   );
 }
 
-function RequestCard({ request, busy, live, onDecision }: { request: GuardRequest; busy: boolean; live: boolean; onDecision: (id: string, decision: "approve" | "deny") => void }) {
+function RequestCard({ request, busy, live, locked, onDecision }: { request: GuardRequest; busy: boolean; live: boolean; locked: boolean; onDecision: (id: string, decision: "approve" | "deny") => void }) {
   return <article className="request-card">
     <div className="request-main"><div className="request-avatar"><ShieldGlyph /></div><div className="request-details"><div className="request-title"><strong>{kindLabel(request)}</strong><span className="pending-badge"><span className="mini-dot mini-dot--amber" />ON HOLD</span></div><div className="request-recipient">{request.kind === "transfer" ? `To ${request.recipient}` : request.recipient} <span>·</span> {formatTime(request.createdAt)}</div><div className="request-reason">{request.reason}</div></div></div>
-    <div className="request-side">{request.amount && <div className="request-amount">{request.amount}<span> NEAR</span></div>}<div className="request-actions"><button className="deny-button" onClick={() => onDecision(request.id, "deny")} disabled={busy}>{busy ? "Working…" : "Deny"}</button><button className="approve-button" onClick={() => onDecision(request.id, "approve")} disabled={busy}>{busy ? "Submitting…" : live ? "Approve & submit" : "Approve"}</button></div></div>
+    <div className="request-side">{request.amount && <div className="request-amount">{request.amount}<span> NEAR</span></div>}<div className="request-actions"><button className="deny-button" onClick={() => onDecision(request.id, "deny")} disabled={busy || locked}>{busy ? "Working…" : "Deny"}</button><button className="approve-button" onClick={() => onDecision(request.id, "approve")} disabled={busy || locked}>{busy ? "Submitting…" : locked ? "Contract upgrade required" : live ? "Approve & submit" : "Approve"}</button></div></div>
   </article>;
 }
 
 function ActivityView({ snapshot, loading, busyId, onDecision }: { snapshot: GuardianSnapshot | null; loading: boolean; busyId: string | null; onDecision: (id: string, decision: "approve" | "deny") => void }) {
   const live = snapshot?.mode === "testnet";
+  const locked = live && !snapshot?.callbackReady;
   return <section className="content-panel"><div className="panel-heading"><div><h2>Transaction requests</h2><p>{live ? "Only Guardian-signed testnet submissions move funds; every owner decision is audited." : "Mock decisions are recorded locally. They are not submitted to NEAR."}</p></div><span className="panel-count">{snapshot?.requests.length ?? 0} RECORDS</span></div>
-    {loading ? <div className="empty-state">Loading activity…</div> : <div className="activity-table"><div className="table-head"><span>REQUEST</span><span>REASON</span><span>STATUS</span><span>TIME</span></div>{snapshot?.requests.map((request) => <div className="table-row" key={request.id}><div className="table-request"><span className="table-request-icon"><StateIcon state={request.status} /></span><span><strong>{kindLabel(request)}</strong><small>{request.recipient}{request.amount ? ` · ${request.amount} NEAR` : ""}{request.transactionHash && <span className="tx-hash">Tx {shortId(request.transactionHash)}</span>}</small></span></div><span className="table-reason">{request.reason ?? "No guard rule triggered"}</span><span className={`table-status table-status--${request.status}`}><StateIcon state={request.status} />{request.status === "sent" ? live ? "Sent · testnet" : "Passed · mock" : request.status}</span><span className="table-time">{formatTime(request.createdAt)}<small>{shortId(request.id)}</small></span>{request.status === "pending" && <div className="table-actions"><button onClick={() => onDecision(request.id, "deny")} disabled={busyId === request.id}>Deny</button><button onClick={() => onDecision(request.id, "approve")} disabled={busyId === request.id}>{live ? "Approve & submit" : "Approve"}</button></div>}</div>)}</div>}
+    {loading ? <div className="empty-state">Loading activity…</div> : <div className="activity-table"><div className="table-head"><span>REQUEST</span><span>REASON</span><span>STATUS</span><span>TIME</span></div>{snapshot?.requests.map((request) => <div className="table-row" key={request.id}><div className="table-request"><span className="table-request-icon"><StateIcon state={request.status} /></span><span><strong>{kindLabel(request)}</strong><small>{request.recipient}{request.amount ? ` · ${request.amount} NEAR` : ""}{request.transactionHash && <span className="tx-hash">Tx {shortId(request.transactionHash)}</span>}</small></span></div><span className="table-reason">{request.reason ?? "No guard rule triggered"}</span><span className={`table-status table-status--${request.status}`}><StateIcon state={request.status} />{request.status === "sent" ? live ? "Confirmed · testnet" : "Passed · preview" : request.status}</span><span className="table-time">{formatTime(request.createdAt)}<small>Request #{request.id}</small></span>{request.status === "pending" && <div className="table-actions"><button onClick={() => onDecision(request.id, "deny")} disabled={busyId === request.id || locked}>Deny</button><button onClick={() => onDecision(request.id, "approve")} disabled={busyId === request.id || locked}>{locked ? "Upgrade required" : live ? "Approve & submit" : "Approve"}</button></div>}</div>)}</div>}
     <div className="audit-heading"><div><h2>Audit trail</h2><p>Every Guardian decision is logged.</p></div></div><div className="audit-list">{snapshot?.audit.map((event) => <div className="audit-row" key={event.id}><span className={`audit-icon audit-icon--${event.action.includes("denied") ? "red" : event.action.includes("held") ? "amber" : "green"}`}><StateIcon state={event.action.includes("denied") ? "denied" : event.action.includes("held") ? "pending" : "sent"} /></span><span><strong>{event.action.replaceAll("_", " ")}</strong><small>{event.detail}</small></span><time>{formatTime(event.createdAt)}</time></div>)}</div>
   </section>;
 }
 
-function RulesView({ snapshot }: { snapshot: GuardianSnapshot | null }) {
+function RulesView({ snapshot, live, ownerReady, onAllowlist }: {
+  snapshot: GuardianSnapshot | null;
+  live: boolean;
+  ownerReady: boolean;
+  onAllowlist: (method: "add_allowlist" | "remove_allowlist", accountId: string) => Promise<void>;
+}) {
+  const [accountId, setAccountId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
   const rules = snapshot?.rules;
+  async function changeAllowlist(method: "add_allowlist" | "remove_allowlist", value: string) {
+    setBusy(true);
+    setMessage("");
+    try {
+      if (!validTestnetAccount(value)) throw new Error("Enter a valid NEAR testnet account ID.");
+      await onAllowlist(method, value);
+      if (method === "add_allowlist") setAccountId("");
+      setMessage(method === "add_allowlist" ? "Recipient added to the on-chain policy." : "Recipient removed from the on-chain policy.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not update the on-chain allowlist.");
+    } finally { setBusy(false); }
+  }
   return <section className="rules-layout"><div className="rules-intro"><span className="rules-symbol"><SlidersGlyph /></span><h2>Rules that keep the wallet steady.</h2><p>Requests are evaluated in code before they can be sent. The language model never decides whether to release a payment.</p></div>
-    <div className="rule-list"><RuleRow icon="↗" title="Amount cap" description="Pause a single payment above your limit." value={`${rules?.amountCap ?? "—"} NEAR`} /><RuleRow icon="◎" title="New recipient" description="Pause payments to an address with no wallet history." value="Always hold" /><RuleRow icon="⌁" title="Transfer burst" description="Pause when too many transfers arrive in a short window." value={`${rules?.burstLimit ?? "—"} in ${rules?.burstWindowSeconds ?? "—"} sec`} /><RuleRow icon="⌘" title="Anomaly score" description="Compare a payment against this wallet’s typical amounts." value={`Z-score > ${rules?.anomalyZScore ?? "—"}`} /><RuleRow icon="⌑" title="Access key change" description="Always pause adding or removing an account key." value="Always hold" /></div>
-    <div className="allowlist-card"><span className="allowlist-icon"><CheckGlyph /></span><div><strong>Trusted recipients</strong><p>Known recipients skip the new recipient rule. Other limits still apply.</p><div className="recipient-chips">{rules?.allowlist.map((recipient) => <span key={recipient}><span className="mini-dot mini-dot--green" />{recipient}</span>)}</div></div></div>
-    <div className="notice-box"><LockGlyph /><span><strong>Clear by design.</strong> These rules are fixed for this prototype. Editable policies will be added after the signing flow is in place.</span></div>
+    <div className="rule-list"><RuleRow icon="↗" title="Amount cap" description={live ? "Transfers above this limit require owner approval." : "Pause a single payment above your local limit."} value={`${rules?.amountCap ?? "—"} NEAR`} /><RuleRow icon="◎" title="Trusted recipient" description="Only allowlisted accounts can pass automatically." value="Contract enforced" />{!live && <><RuleRow icon="⌁" title="Transfer burst" description="Pause when too many transfers arrive in a short window." value={`${rules?.burstLimit ?? "—"} in ${rules?.burstWindowSeconds ?? "—"} sec`} /><RuleRow icon="⌘" title="Anomaly score" description="Compare a payment against this wallet’s typical amounts." value={`Z-score > ${rules?.anomalyZScore ?? "—"}`} /><RuleRow icon="⌑" title="Access key change" description="Always pause adding or removing an account key." value="Always hold" /></>}</div>
+    <div className="allowlist-card"><span className="allowlist-icon"><CheckGlyph /></span><div className="allowlist-management"><strong>{live ? "Contract allowlist" : "Preview recipients"}</strong><p>{live ? "Changes are submitted to the policy contract and require the owner wallet." : "Sample trusted recipients for the local preview."}</p><div className="recipient-chips">{rules?.allowlist.map((recipient) => <span className="recipient-chip" key={recipient}><span><span className="mini-dot mini-dot--green" />{recipient}</span>{live && <button aria-label={`Remove ${recipient}`} disabled={!ownerReady || busy} onClick={() => void changeAllowlist("remove_allowlist", recipient)}>Remove</button>}</span>)}</div>{live && <form className="allowlist-form" onSubmit={(event) => { event.preventDefault(); void changeAllowlist("add_allowlist", accountId.trim()); }}><input value={accountId} onChange={(event) => setAccountId(event.target.value)} placeholder="recipient.testnet" required /><button type="submit" disabled={!ownerReady || busy}>{busy ? "Submitting…" : "Add recipient"}</button></form>}{message && <p className="allowlist-message" role="status">{message}</p>}</div></div>
+    <div className="notice-box"><LockGlyph /><span><strong>{live ? "Funds are held by the policy contract." : "Preview mode."}</strong> {live ? "The contract sends from its own NEAR balance. This dashboard does not guard transfers sent directly from a personal wallet outside the contract." : "Mock changes are local and do not affect the testnet contract."}</span></div>
   </section>;
 }
 

@@ -1,19 +1,26 @@
 import { NextResponse } from "next/server";
-import { getGuardianSignerStatus } from "@/lib/guardian-signer";
+import { getGuardianSignerStatus, verifyGuardianFunctionCallKey } from "@/lib/guardian-signer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const status = getGuardianSignerStatus();
+  let keyIssue: string | undefined;
+  if (status.configured) {
+    try { await verifyGuardianFunctionCallKey(); }
+    catch (error) { keyIssue = error instanceof Error ? error.message : "Guardian function-call key is invalid."; }
+  }
+  const configured = status.configured && !keyIssue;
   return NextResponse.json(
     {
       ...status,
+      configured,
       // Status never exposes the signing key or submits a transaction.
-      signingEnabled: status.configured,
-      message: status.configured
-        ? "Guardian testnet signer configuration is complete. Only owner-authorized requests that pass Guardian rules can be submitted."
-        : status.issue ?? (status.missing.length
+      signingEnabled: configured,
+      message: configured
+        ? "The server key is restricted to request_transfer on the configured policy contract."
+        : keyIssue ?? status.issue ?? (status.missing.length
           ? `Testnet configuration is incomplete: ${status.missing.join(", ")}.`
           : "Running in mock mode. No NEAR network transactions are sent."),
     },

@@ -1,27 +1,34 @@
 import { NextResponse } from "next/server";
-import { getSnapshot, getTestnetSnapshot } from "@/lib/db";
-import { getGuardianSignerStatus, readGuardianAccount } from "@/lib/guardian-signer";
-import { readGuardianTransferHistory } from "@/lib/near-history";
+import { GUARDIAN_RULES } from "@/lib/rules";
+import { getOnchainGuardianSnapshot } from "@/lib/near-policy";
+import type { GuardianSnapshot } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   if (process.env.GUARDIAN_MODE !== "testnet") {
+    if (process.env.VERCEL) return NextResponse.json({ error: "Production must run with GUARDIAN_MODE=testnet." }, { status: 503 });
+    const { getSnapshot } = await import("@/lib/db");
     return NextResponse.json(getSnapshot(), { headers: { "Cache-Control": "no-store" } });
   }
-  const status = getGuardianSignerStatus();
-  if (!status.configured) {
-    return NextResponse.json({ ...getTestnetSnapshot("—", []), setupError: status.issue ?? `Configure: ${status.missing.join(", ")}` }, { headers: { "Cache-Control": "no-store" } });
-  }
   try {
-    const account = await readGuardianAccount();
-    const history = await readGuardianTransferHistory(account.accountId);
-    return NextResponse.json(getTestnetSnapshot(account.balance, history), { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(await getOnchainGuardianSnapshot(), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return NextResponse.json({
-      ...getTestnetSnapshot("—", []),
+      ...emptyTestnetSnapshot(),
       setupError: error instanceof Error ? error.message : "Could not load testnet Guardian account data.",
     }, { headers: { "Cache-Control": "no-store" } });
   }
+}
+
+function emptyTestnetSnapshot(setupError?: string): GuardianSnapshot {
+  return {
+    mode: "testnet", accountId: process.env.POLICY_CONTRACT_ID || "unconfigured.testnet",
+    ownerAccountId: process.env.OWNER_ACCOUNT_ID || "wisejaguar3455.testnet",
+    guardianAccountId: process.env.GUARDIAN_ACCOUNT_ID || "unconfigured.testnet",
+    contractVersion: null, callbackReady: false,
+    balance: "—", rules: { ...GUARDIAN_RULES, allowlist: [] }, requests: [], audit: [],
+    ...(setupError ? { setupError } : {}),
+  };
 }

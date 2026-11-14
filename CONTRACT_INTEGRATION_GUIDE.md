@@ -1,208 +1,59 @@
-# On-Chain Guardian Policy Contract (NEAR Testnet)
+# V2 NEAR Testnet Integration
 
-This guide is written for frontend and full-stack developers integrating the **V2 On-Chain Guardian Policy Smart Contract** with the Wallet Guardian UI, API routes, and agent scripts.
+This guide documents the app's V2 transaction path and Vercel configuration.
 
----
+## Deployed contract and owner
 
-## 1. What This Smart Contract Does (The 30-Second Summary)
+- Policy contract: `guardian-policy-482207.testnet`
+- Owner: `wisejaguar3455.testnet`
+- Network: NEAR testnet
+- Current policy cap: read from `get_policy`; the deployed default is 5 NEAR
 
-In V1, transaction rules and holds were simulated in a local SQLite database.  
-In V2, the rules are **enforced directly by a NEAR smart contract on NEAR testnet**.
+The contract owns the protected treasury. This app does not intercept personal wallet transfers made outside the contract.
 
-- **Safe transfers** (recipient is allowlisted AND amount $\le$ 5 NEAR): The contract executes the transfer **immediately** on-chain.
-- **Risky transfers / Attacks** (amount > 5 NEAR OR recipient is not allowlisted): The contract **blocks** the transfer, locks it in a `Pending` queue on-chain, and writes a human-readable reason (e.g., `"Transfer amount 10.00 NEAR exceeds policy cap 5.00 NEAR; Recipient is not on the trusted allowlist"`).
-- **Owner Authority**: Only the designated `owner_id` (via their connected wallet, like Meteor Wallet or HOT Wallet) can call `approve_request` or `deny_request`.
+## Request and decision flow
 
----
+1. The owner connects Meteor Wallet on testnet.
+2. The owner submits `request_transfer({ recipient, amount })` directly to the policy contract. Amount is a decimal string in yoctoNEAR.
+3. The contract pays a transfer only when the recipient is allowlisted and the amount is within policy. Otherwise it stores the request as `Pending`.
+4. The owner calls `approve_request({ request_id })` or `deny_request({ request_id })` from the configured owner account.
+5. The app reads `get_requests`, `get_policy`, `get_allowlist`, and the policy contract account balance over NEAR RPC. There is no Vercel-local SQLite source of truth for testnet mode.
 
-## 2. Already Deployed & Live on NEAR Testnet
+The app verifies that the connected account equals `wisejaguar3455.testnet`. The contract enforces that owner check again on-chain.
 
-A contract instance has already been deployed and tested on NEAR Testnet:
-- **Contract Account ID:** `guardian-policy-482207.testnet`
-- **Configured Owner Account:** `wisejaguar3455.testnet`
-- **Default Policy Cap:** `5 NEAR` (`5000000000000000000000000 yoctoNEAR`)
-- **NEAR Testnet Explorer:** [https://explorer.testnet.near.org/accounts/guardian-policy-482207.testnet](https://explorer.testnet.near.org/accounts/guardian-policy-482207.testnet)
+## Guardian agent access key
 
----
+The server-side agent uses a separate testnet account. Its private key must be a NEAR **FunctionCall** access key with:
 
-## 3. How to Connect in Your Code (Frontend / API Routes)
+- `receiver_id`: `guardian-policy-482207.testnet`
+- `method_names`: exactly `request_transfer`
+- finite gas allowance: greater than zero and at most 1 NEAR
 
-### A. Environment Variables (`.env.local`)
-Add the policy contract ID to your `.env.local`:
+The app checks that permission through NEAR RPC and refuses FullAccess, an unexpected receiver, extra methods, or unlimited/excessive allowance. The key cannot call `approve_request`, `deny_request`, or send a direct transfer. Keep it in Vercel encrypted environment variables as `GUARDIAN_PRIVATE_KEY`; do not commit it, log it, or set it as a `NEXT_PUBLIC_` variable.
 
-```bash
+The owner must set the contract's `guardian_id` to this separate account with `set_guardian`. The dashboard provides an **Authorize Guardian account** action that sends this owner-only contract call. Confirm the displayed on-chain Guardian ID matches `GUARDIAN_ACCOUNT_ID` afterward.
+
+## Vercel environment
+
+Configure these server environment variables in Vercel and redeploy:
+
+```env
 GUARDIAN_MODE=testnet
 POLICY_CONTRACT_ID=guardian-policy-482207.testnet
 OWNER_ACCOUNT_ID=wisejaguar3455.testnet
+GUARDIAN_ACCOUNT_ID=your-separate-agent.testnet
+GUARDIAN_PRIVATE_KEY=ed25519:<restricted-function-call-secret>
 NEAR_RPC_URL=https://rpc.testnet.near.org
 ```
 
----
+Do not set `GUARDIAN_MODE=mock` on Vercel. Mock mode uses SQLite and is intended for local preview only. Testnet policy state is read from NEAR, avoiding ephemeral serverless file storage.
 
-### B. View Calls (Reading On-Chain State — No Wallet or Gas Needed)
+## Transfer result lifecycle
 
-You can call view functions from any client or server without signing a transaction or spending gas:
+The callback-enabled contract returns `Processing` when a transfer is scheduled. A private callback then changes the request to `Executed` on successful transfer or `Failed` on a failed transfer. The UI disables request and approval actions when the deployed contract does not expose version `2.1.0`.
 
-#### 1. Fetch Current Policy Configuration (`get_policy`)
-```ts
-import { JsonRpcProvider } from "near-api-js";
+The Rust source includes this lifecycle, but the deployed contract must be upgraded by an authorized deployer before it takes effect on testnet. Updating the Vercel app does not upgrade contract bytecode. Never place a contract-account FullAccess key in Vercel.
 
-const provider = new JsonRpcProvider({ url: "https://rpc.testnet.near.org" });
+## Read-only deployment check
 
-const raw = await provider.query({
-  request_type: "call_function",
-  finality: "final",
-  account_id: "guardian-policy-482207.testnet",
-  method_name: "get_policy",
-  args_base64: "",
-});
-
-const policy = JSON.parse(Buffer.from(raw.result).toString());
-// Returns: { owner_id: "...", guardian_id: "...", amount_cap: "5000000000000000000000000" }
-```
-
-#### 2. Fetch Pending Held Requests (`get_pending_requests`)
-```ts
-const raw = await provider.query({
-  request_type: "call_function",
-  finality: "final",
-  account_id: "guardian-policy-482207.testnet",
-  method_name: "get_pending_requests",
-  args_base64: "",
-});
-
-const pending = JSON.parse(Buffer.from(raw.result).toString());
-// Returns array of held requests:
-// [
-//   {
-//     id: 1,
-//     recipient: "unknown-hacker.testnet",
-//     amount: "10000000000000000000000000",
-//     reason: "Transfer amount 10.00 NEAR exceeds policy cap...",
-//     status: "Pending",
-//     created_at: 1794087074780234500,
-//     updated_at: 1794087074780234500
-//   }
-// ]
-```
-
-#### 3. Check if Recipient is Allowlisted (`is_allowlisted`)
-```ts
-const raw = await provider.query({
-  request_type: "call_function",
-  finality: "final",
-  account_id: "guardian-policy-482207.testnet",
-  method_name: "is_allowlisted",
-  args_base64: Buffer.from(JSON.stringify({ account_id: "friend.testnet" })).toString("base64"),
-});
-
-const isTrusted = JSON.parse(Buffer.from(raw.result).toString()); // true | false
-```
-
----
-
-### C. Change Calls (Transactions Signed by the User / Wallet)
-
-When the user connects their wallet (Meteor / HOT Wallet) in the UI, use the wallet selector's `signAndSendTransaction`:
-
-#### 1. Approving a Held Request (When user clicks "Approve" in UI)
-```ts
-const outcome = await wallet.signAndSendTransaction({
-  receiverId: "guardian-policy-482207.testnet",
-  actions: [
-    {
-      type: "FunctionCall",
-      params: {
-        methodName: "approve_request",
-        args: { request_id: requestId }, // e.g. 1
-        gas: "30000000000000", // 30 TGas
-        deposit: "0",
-      },
-    },
-  ],
-});
-```
-
-#### 2. Denying a Held Request (When user clicks "Deny" in UI)
-```ts
-const outcome = await wallet.signAndSendTransaction({
-  receiverId: "guardian-policy-482207.testnet",
-  actions: [
-    {
-      type: "FunctionCall",
-      params: {
-        methodName: "deny_request",
-        args: { request_id: requestId },
-        gas: "30000000000000",
-        deposit: "0",
-      },
-    },
-  ],
-});
-```
-
-#### 3. Adding an Account to the Allowlist (Owner Settings in UI)
-```ts
-await wallet.signAndSendTransaction({
-  receiverId: "guardian-policy-482207.testnet",
-  actions: [
-    {
-      type: "FunctionCall",
-      params: {
-        methodName: "add_allowlist",
-        args: { account_id: "new-vendor.testnet" },
-        gas: "30000000000000",
-        deposit: "0",
-      },
-    },
-  ],
-});
-```
-
----
-
-### D. Server-Side Agent Calling `request_transfer`
-The Guardian Agent uses `src/lib/guardian-signer.ts`:
-
-```ts
-import { requestOnChainPolicyTransfer } from "@/lib/guardian-signer";
-
-// Submits a request to the smart contract:
-const { transactionHash, outcome } = await requestOnChainPolicyTransfer({
-  recipient: "friend.testnet",
-  amount: "1.5", // NEAR
-});
-```
-
----
-
-## 4. How to Test Everything Locally
-
-You can test the contract anytime without writing custom code:
-
-```bash
-# 1. Run unit tests
-cd contracts/guardian-policy
-cargo test --lib
-
-# 2. Run the live on-chain attack simulation script against testnet
-cd ~/LODESTAR
-node test-onchain-hold.js
-```
-
----
-
-## 5. Contract API Reference
-
-| Method Name | Type | Caller | Arguments | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `get_policy` | View | Anyone | *None* | Returns `{ owner_id, guardian_id, amount_cap }` |
-| `get_pending_requests` | View | Anyone | *None* | Returns array of all currently held requests |
-| `get_allowlist` | View | Anyone | `from_index?: u64, limit?: u64` | Returns paginated list of trusted accounts |
-| `is_allowlisted` | View | Anyone | `account_id: AccountId` | Returns boolean check |
-| `request_transfer` | Change | Guardian/Owner | `recipient: AccountId, amount: U128` (yoctoNEAR) | Evaluates transfer; executes immediately or holds in queue |
-| `approve_request` | Change | Owner only | `request_id: u64` | Releases and transfers held funds to recipient |
-| `deny_request` | Change | Owner only | `request_id: u64` | Cancels and drops held request |
-| `add_allowlist` | Change | Owner only | `account_id: AccountId` | Adds account to trusted allowlist |
-| `remove_allowlist`| Change | Owner only | `account_id: AccountId` | Removes account from allowlist |
-| `set_amount_cap` | Change | Owner only | `amount_cap_near: u128` | Updates threshold cap in whole NEAR |
+`node deploy.js` is retained as a compatibility filename but now only reads `get_policy` and prints the owner, Guardian ID, and cap. It does not create accounts, deploy, sign transactions, or save key material.
