@@ -49,6 +49,8 @@ export default function Home() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [transferRecipient, setTransferRecipient] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
+  const [accountMenu, setAccountMenu] = useState<"connect" | "profile" | null>(null);
+  const [accountBusy, setAccountBusy] = useState(false);
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("lodestar-theme");
@@ -71,6 +73,55 @@ export default function Home() {
     const timeout = window.setTimeout(() => setToast(null), 3600);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (!accountMenu) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest("[data-account-menu-root]")) setAccountMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setAccountMenu(null); };
+    document.addEventListener("click", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("click", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [accountMenu]);
+
+  function openAccountControl(anchor: "connect" | "profile") {
+    if (!ownerWallet.accountId) {
+      ownerWallet.connect();
+      return;
+    }
+    setAccountMenu((current) => current === anchor ? null : anchor);
+  }
+
+  function switchWallet() {
+    setAccountMenu(null);
+    ownerWallet.connect();
+  }
+
+  async function logOutWallet() {
+    setAccountBusy(true);
+    try {
+      await ownerWallet.disconnect();
+      setAccountMenu(null);
+      setToast({ tone: "success", message: "Wallet disconnected. Connect another NEAR account whenever you’re ready." });
+    } catch (error) {
+      setToast({ tone: "error", message: error instanceof Error ? error.message : "Could not disconnect this wallet." });
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  function accountActions(anchor: "connect" | "profile") {
+    if (accountMenu !== anchor || !ownerWallet.accountId) return null;
+    return <div className={`account-menu account-menu--${anchor}`} role="menu" aria-label="Wallet account options">
+      <div className="account-menu__identity"><span className="account-menu__label">CONNECTED ACCOUNT</span><strong title={ownerWallet.accountId}>{ownerWallet.accountId}</strong></div>
+      <button type="button" role="menuitem" onClick={switchWallet}><span aria-hidden="true">⇄</span>Switch wallet</button>
+      <button type="button" role="menuitem" className="account-menu__logout" onClick={() => void logOutWallet()} disabled={accountBusy}><span aria-hidden="true">↪</span>{accountBusy ? "Disconnecting…" : "Log out"}</button>
+    </div>;
+  }
 
   const pending = useMemo(() => snapshot?.requests.filter((request) => request.status === "pending") ?? [], [snapshot]);
   const totals = useMemo(() => ({
@@ -192,13 +243,13 @@ export default function Home() {
         <header className="topbar">
           <button className="menu-toggle" type="button" aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"} aria-expanded={sidebarOpen} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"} onClick={() => setSidebarOpen((open) => !open)}><MenuGlyph /></button>
           <div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{activeView === "overview" ? "Overview" : activeView === "activity" ? "Activity" : "Protection rules"}</strong></div>
-          <div className="topbar-right"><button className="theme-toggle" type="button" aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} onClick={() => setTheme((current) => { const next = current === "dark" ? "light" : "dark"; window.localStorage.setItem("lodestar-theme", next); return next; })}><ThemeGlyph dark={theme === "dark"} /></button><span className="mode-pill"><span className="mode-light" />{snapshot?.mode === "testnet" ? "NEAR TESTNET · ON-CHAIN" : "LOCAL PREVIEW"}</span><button className="avatar avatar--small" aria-label="Account profile">{ownerWallet.accountId?.slice(0, 1).toUpperCase() ?? "D"}</button></div>
+          <div className="topbar-right"><button className="theme-toggle" type="button" aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} onClick={() => setTheme((current) => { const next = current === "dark" ? "light" : "dark"; window.localStorage.setItem("lodestar-theme", next); return next; })}><ThemeGlyph dark={theme === "dark"} /></button><span className="mode-pill"><span className="mode-light" />{snapshot?.mode === "testnet" ? "NEAR TESTNET · ON-CHAIN" : "LOCAL PREVIEW"}</span><div className="account-control account-control--profile" data-account-menu-root><button className="avatar avatar--small" type="button" aria-label={ownerWallet.accountId ? "Wallet account options" : "Connect wallet"} aria-haspopup={ownerWallet.accountId ? "menu" : undefined} aria-expanded={accountMenu === "profile"} onClick={() => openAccountControl("profile")}>{ownerWallet.accountId?.slice(0, 1).toUpperCase() ?? "D"}</button>{accountActions("profile")}</div></div>
         </header>
 
         <div className="content">
           <div className="page-heading">
             <div><div className="eyebrow"><span className="eyebrow-line" />{snapshot?.mode === "testnet" ? "V2 POLICY CONSOLE · NEAR TESTNET" : "LOCAL PREVIEW · NO CHAIN ACTIVITY"}</div><h1>{activeView === "overview" ? "Treasury protection." : activeView === "activity" ? "On-chain activity." : "Policy controls."}</h1><p className="page-subtitle">{activeView === "overview" ? "Review policy decisions and transfers secured by the NEAR contract." : activeView === "activity" ? "A live record of requests and outcomes read from the policy contract." : "Manage the contract’s amount threshold and trusted recipients."}</p></div>
-            <button className="connect-button" onClick={ownerWallet.connect} disabled={!ownerWallet.ready} title="Connect the deployed contract owner account"><span className="connect-dot" />{ownerWallet.accountId ?? (ownerWallet.ready ? "Connect owner wallet" : "Loading wallet…")}<ChevronDown /></button>
+            <div className="account-control account-control--connect" data-account-menu-root><button className="connect-button" type="button" onClick={() => openAccountControl("connect")} disabled={!ownerWallet.ready} title={ownerWallet.accountId ? "Manage connected wallet" : "Connect the deployed contract owner account"} aria-haspopup={ownerWallet.accountId ? "menu" : undefined} aria-expanded={accountMenu === "connect"}><span className="connect-dot" />{ownerWallet.accountId ?? (ownerWallet.ready ? "Connect owner wallet" : "Loading wallet…")}<ChevronDown /></button>{accountActions("connect")}</div>
           </div>
 
           {snapshot?.mode === "testnet" && <div className={`live-notice ${snapshot.setupError || !snapshot.callbackReady ? "live-notice--error" : ""}`}><strong>Policy contract · {snapshot.accountId}</strong><span>Owner: {snapshot.ownerAccountId} · Guardian agent: {snapshot.guardianAccountId}</span>{snapshot.contractGuardianId !== snapshot.guardianAccountId && <div className="guardian-config"><span>Contract currently authorizes <b>{snapshot.contractGuardianId}</b>. Update it to the restricted agent account before enabling agent requests.</span><button onClick={() => void ownerWallet.callContract(snapshot.accountId, "set_guardian", { guardian_id: snapshot.guardianAccountId! }).then(() => refresh()).catch((error) => setToast({ tone: "error", message: error instanceof Error ? error.message : "Could not update contract Guardian." }))} disabled={ownerWallet.accountId !== snapshot.ownerAccountId}>Authorize Guardian account</button></div>}{!snapshot.callbackReady && <span>Contract upgrade required: transfer outcomes must be finalized by the V2.1 callback. Requests and approvals are disabled until the upgraded contract is deployed.</span>}{snapshot.setupError && <span>{snapshot.setupError}</span>}</div>}

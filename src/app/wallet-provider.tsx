@@ -13,6 +13,7 @@ type WalletContextValue = {
   accountId: string | null;
   ready: boolean;
   connect: () => void;
+  disconnect: () => Promise<void>;
   signMessage: (message: string, recipient: string, nonceBase64: string) => Promise<SignedOwnerMessage>;
   callContract: (contractId: string, methodName: string, args?: Record<string, string | number>) => Promise<void>;
 };
@@ -67,6 +68,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const connect = useCallback(() => modal?.show(), [modal]);
+  const disconnect = useCallback(async () => {
+    if (!selector || !accountId) return;
+    const wallet = await selector.wallet();
+    await wallet.signOut();
+  }, [selector, accountId]);
   const signMessage = useCallback(async (message: string, recipient: string, nonceBase64: string) => {
     if (!selector || !accountId) throw new Error("Connect the owner’s Meteor Wallet first.");
     const wallet = await selector.wallet();
@@ -85,7 +91,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     });
   }, [selector, accountId]);
 
-  const value = useMemo(() => ({ accountId, ready, connect, signMessage, callContract }), [accountId, ready, connect, signMessage, callContract]);
+  const value = useMemo(() => ({ accountId, ready, connect, disconnect, signMessage, callContract }), [accountId, ready, connect, disconnect, signMessage, callContract]);
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
 }
 

@@ -235,3 +235,27 @@ html,body{width:100%;min-height:100%;overflow-x:clip}
 @media(max-width:576px){.nws-modal-wrapper.dark-theme .nws-modal-background{width:calc(100vw - 16px);max-height:calc(100dvh - 16px);bottom:8px}.nws-modal-wrapper.dark-theme .nws-modal{height:min(500px,calc(100dvh - 116px));min-height:200px}.nws-modal-wrapper.dark-theme .modal-left{display:block;overflow-x:hidden}.nws-modal-wrapper.dark-theme .wallet-options-wrapper{height:auto;padding:10px 0}.nws-modal-wrapper.dark-theme .wallet-options-wrapper .options-list{gap:8px}.nws-modal-wrapper.dark-theme .single-wallet.sidebar{min-height:58px;padding:9px!important}.nws-modal-wrapper.dark-theme .single-wallet.sidebar .content .description{font-size:8px}}
 
 @media(max-width:430px){.menu-toggle,.theme-toggle{width:32px;height:32px}.topbar{gap:8px}.breadcrumbs{gap:5px;font-size:10px}.topbar-right{gap:6px}}
+
+/* Wallet account menu shared by the owner button and profile avatar. */
+.account-control{position:relative;display:inline-flex;align-items:center;min-width:0}
+.account-menu{position:absolute;z-index:80;top:calc(100% + 10px);width:min(260px,calc(100vw - 32px));padding:8px;border:1px solid #e9e6f4;border-radius:12px;background:#fff;color:#282633;box-shadow:0 16px 42px #231b4826;animation:account-menu-in .16s ease-out}
+.account-menu--connect{right:0}
+.account-menu--profile{right:0}
+.account-menu__identity{display:grid;gap:6px;padding:9px 10px 11px;border-bottom:1px solid #efedf4;margin-bottom:5px;min-width:0}
+.account-menu__label{font:500 8px 'DM Mono',monospace;letter-spacing:.9px;color:#918da0}
+.account-menu__identity strong{font:500 10px 'DM Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-menu>button{width:100%;min-height:36px;display:flex;align-items:center;gap:9px;padding:0 10px;border:0;border-radius:7px;background:transparent;color:#4d4a58;text-align:left;font:500 10px Manrope,sans-serif;cursor:pointer;transition:background .15s ease,color .15s ease}
+.account-menu>button>span{width:17px;text-align:center;font-size:15px;color:#7768d4}
+.account-menu>button:hover,.account-menu>button:focus-visible{outline:0;background:#f3f0ff;color:#5545ba}
+.account-menu>button.account-menu__logout{color:#b34c55}
+.account-menu>button.account-menu__logout>span{color:#b34c55}
+.account-menu>button.account-menu__logout:hover,.account-menu>button.account-menu__logout:focus-visible{background:#fff1f0;color:#9d363f}
+.account-menu>button:disabled{opacity:.6;cursor:wait}
+@keyframes account-menu-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.theme-dark .account-menu{border-color:#3d394b;background:#211f2a;color:#f1eff8;box-shadow:0 16px 42px #0008}
+.theme-dark .account-menu__identity{border-color:#393644}
+.theme-dark .account-menu__label{color:#aaa6b8}
+.theme-dark .account-menu>button{color:#d5d2df}
+.theme-dark .account-menu>button:hover,.theme-dark .account-menu>button:focus-visible{background:#302b43;color:#d2caff}
+.theme-dark .account-menu>button.account-menu__logout:hover,.theme-dark .account-menu>button.account-menu__logout:focus-visible{background:#38262b;color:#ffb6b2}
+@media(prefers-reduced-motion:reduce){.account-menu{animation:none}}
