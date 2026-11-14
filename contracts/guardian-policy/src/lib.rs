@@ -12,10 +12,12 @@ use serde::{Deserialize, Serialize};
 #[serde(crate = "near_sdk::serde")]
 pub enum RequestStatus {
     Pending,
-    Processing,
     Approved,
     Denied,
     Executed,
+    // Keep newly introduced variants after the original statuses: Borsh encodes
+    // enum variants by index, and existing on-chain requests must retain meaning.
+    Processing,
     Failed,
 }
 

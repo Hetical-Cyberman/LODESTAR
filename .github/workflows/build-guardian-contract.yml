@@ -1,0 +1,35 @@
+name: Build NEAR Guardian Contract
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "contracts/guardian-policy/**"
+      - ".github/workflows/build-guardian-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust and NEAR wasm target
+        uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          target: wasm32-unknown-unknown
+
+      - name: Build release WASM
+        run: cargo build --locked --manifest-path contracts/guardian-policy/Cargo.toml --target wasm32-unknown-unknown --release
+
+      - name: Upload contract artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: guardian-policy-v2.1-wasm
+          path: contracts/guardian-policy/target/wasm32-unknown-unknown/release/guardian_policy.wasm
+          if-no-files-found: error
+          retention-days: 7
