@@ -1,0 +1,20 @@
+# Local secrets and deployment credentials
+.env*
+.guardian-fc-key.json
+deployment-testnet.json
+
+# Local-only data and Rust build outputs
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+contracts/
+*.wasm
+deploy.js
+test-onchain-hold.js
+CONTRACT_INTEGRATION_GUIDE.md
+AGENTS.md
+tsconfig.tsbuildinfo
+
+# Local Vercel project metadata
+.vercel/
