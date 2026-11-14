@@ -45,8 +45,15 @@ export default function Home() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [activeView, setActiveView] = useState<"overview" | "activity" | "rules">("overview");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const [transferRecipient, setTransferRecipient] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("lodestar-theme");
+    if (savedTheme === "dark" || savedTheme === "light") setTheme(savedTheme);
+  }, []);
 
   const refresh = useCallback(async () => {
     const response = await fetch("/api/snapshot", { cache: "no-store" });
@@ -159,17 +166,17 @@ export default function Home() {
   }
 
   return (
-    <main className="shell">
+    <main className={`shell ${theme === "dark" ? "theme-dark" : ""} ${sidebarOpen ? "" : "shell--sidebar-hidden"}`}>
       <aside className="sidebar">
-        <a className="brand" href="#top" aria-label="Guardian home">
+        <a className="brand" href="#top" aria-label="LODESTAR home" data-tooltip="LODESTAR" title="LODESTAR">
           <span className="brand-mark"><ShieldGlyph /></span>
-          <span className="brand-copy"><strong>guardian</strong><small>WALLET SECURITY</small></span>
+          <span className="brand-copy"><strong>LODESTAR</strong><small>WALLET SECURITY</small></span>
         </a>
         <div className="workspace-label">WORKSPACE</div>
         <nav className="nav-list" aria-label="Main navigation">
-          <button className={`nav-item ${activeView === "overview" ? "nav-item--active" : ""}`} onClick={() => setActiveView("overview")}><GridGlyph />Overview</button>
-          <button className={`nav-item ${activeView === "activity" ? "nav-item--active" : ""}`} onClick={() => setActiveView("activity")}><ActivityGlyph />Activity<span className="nav-count">{pending.length || ""}</span></button>
-          <button className={`nav-item ${activeView === "rules" ? "nav-item--active" : ""}`} onClick={() => setActiveView("rules")}><SlidersGlyph />Protection rules</button>
+          <button className={`nav-item ${activeView === "overview" ? "nav-item--active" : ""}`} data-tooltip="Overview" title="Overview" onClick={() => setActiveView("overview")}><GridGlyph />Overview</button>
+          <button className={`nav-item ${activeView === "activity" ? "nav-item--active" : ""}`} data-tooltip="Activity" title="Activity" onClick={() => setActiveView("activity")}><ActivityGlyph />Activity<span className="nav-count">{pending.length || ""}</span></button>
+          <button className={`nav-item ${activeView === "rules" ? "nav-item--active" : ""}`} data-tooltip="Protection rules" title="Protection rules" onClick={() => setActiveView("rules")}><SlidersGlyph />Protection rules</button>
         </nav>
         <div className="sidebar-bottom">
           <div className="support-card">
@@ -183,8 +190,9 @@ export default function Home() {
 
       <section className="main-panel" id="top">
         <header className="topbar">
+          <button className="menu-toggle" type="button" aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"} aria-expanded={sidebarOpen} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"} onClick={() => setSidebarOpen((open) => !open)}><MenuGlyph /></button>
           <div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{activeView === "overview" ? "Overview" : activeView === "activity" ? "Activity" : "Protection rules"}</strong></div>
-          <div className="topbar-right"><span className="mode-pill"><span className="mode-light" />{snapshot?.mode === "testnet" ? "NEAR TESTNET · ON-CHAIN" : "LOCAL PREVIEW"}</span><button className="avatar avatar--small" aria-label="Account profile">{ownerWallet.accountId?.slice(0, 1).toUpperCase() ?? "D"}</button></div>
+          <div className="topbar-right"><button className="theme-toggle" type="button" aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`} onClick={() => setTheme((current) => { const next = current === "dark" ? "light" : "dark"; window.localStorage.setItem("lodestar-theme", next); return next; })}><ThemeGlyph dark={theme === "dark"} /></button><span className="mode-pill"><span className="mode-light" />{snapshot?.mode === "testnet" ? "NEAR TESTNET · ON-CHAIN" : "LOCAL PREVIEW"}</span><button className="avatar avatar--small" aria-label="Account profile">{ownerWallet.accountId?.slice(0, 1).toUpperCase() ?? "D"}</button></div>
         </header>
 
         <div className="content">
@@ -204,9 +212,9 @@ export default function Home() {
             </section>
 
             <div className="stat-grid">
-              <article className="stat-card"><div className="stat-top"><span>{snapshot?.mode === "testnet" ? "CONTRACT TREASURY" : "LOCAL PREVIEW BALANCE"}</span><span className="stat-icon stat-icon--lavender"><CoinGlyph /></span></div><div className="stat-number">{snapshot ? snapshot.balance : "—"}<span> NEAR</span></div><div className="stat-foot"><span className="mini-dot mini-dot--lavender" />{snapshot?.mode === "testnet" ? "Funds held by policy contract" : "Preview only · no real funds"}</div></article>
-              <article className="stat-card"><div className="stat-top"><span>HELD FOR REVIEW</span><span className="stat-icon stat-icon--amber"><PauseGlyph /></span></div><div className="stat-number">{totals.held}<span> requests</span></div><div className="stat-foot"><span className="mini-dot mini-dot--amber" />Waiting for your decision</div></article>
-              <article className="stat-card"><div className="stat-top"><span>{snapshot?.mode === "testnet" ? "SUBMITTED" : "MOCK PASSED"}</span><span className="stat-icon stat-icon--green"><CheckGlyph /></span></div><div className="stat-number">{totals.passed}<span> requests</span></div><div className="stat-foot"><span className="mini-dot mini-dot--green" />{snapshot?.mode === "testnet" ? "Confirmed on NEAR testnet" : "No rules were triggered"}</div></article>
+              <article className="stat-card stat-card--treasury"><div className="stat-top"><span>{snapshot?.mode === "testnet" ? "CONTRACT TREASURY" : "LOCAL PREVIEW BALANCE"}</span><span className="stat-icon stat-icon--lavender"><CoinGlyph /></span></div><div className="stat-number">{snapshot ? snapshot.balance : "—"}<span> NEAR</span></div><div className="stat-foot"><span className="mini-dot mini-dot--lavender" />{snapshot?.mode === "testnet" ? "Funds held by policy contract" : "Preview only · no real funds"}</div><MiniChart variant="treasury" /></article>
+              <article className="stat-card stat-card--held"><div className="stat-top"><span>HELD FOR REVIEW</span><span className="stat-icon stat-icon--amber"><PauseGlyph /></span></div><div className="stat-number">{totals.held}<span> requests</span></div><div className="stat-foot"><span className="mini-dot mini-dot--amber" />Waiting for your decision</div><MiniChart variant="held" /></article>
+              <article className="stat-card stat-card--submitted"><div className="stat-top"><span>{snapshot?.mode === "testnet" ? "SUBMITTED" : "MOCK PASSED"}</span><span className="stat-icon stat-icon--green"><CheckGlyph /></span></div><div className="stat-number">{totals.passed}<span> requests</span></div><div className="stat-foot"><span className="mini-dot mini-dot--green" />{snapshot?.mode === "testnet" ? "Confirmed on NEAR testnet" : "No rules were triggered"}</div><MiniChart variant="submitted" /></article>
             </div>
 
             <div className="section-head"><div><h2>Needs your attention <span className="section-count">{pending.length}</span></h2><p>These requests are waiting for your approval.</p></div><button className="text-button" onClick={() => setActiveView("activity")}>View all activity <ArrowRight /></button></div>
@@ -284,6 +292,15 @@ function RulesView({ snapshot, live, ownerReady, onAllowlist }: {
 function RuleRow({ icon, title, description, value }: { icon: string; title: string; description: string; value: string }) {
   return <article className="rule-row"><span className="rule-icon">{icon}</span><span className="rule-copy"><strong>{title}</strong><small>{description}</small></span><span className="rule-value">{value}</span><span className="rule-toggle" aria-label="Rule enabled"><span /></span></article>;
 }
+
+function MiniChart({ variant }: { variant: "treasury" | "held" | "submitted" }) {
+  if (variant === "held") return <svg className="stat-chart stat-chart--held" viewBox="0 0 320 76" preserveAspectRatio="none" aria-hidden="true"><path className="chart-baseline" d="M0 70H320" />{[[12, 43], [48, 27], [84, 48], [120, 18], [156, 35], [192, 10], [228, 42], [264, 24], [300, 33]].map(([x, y]) => <rect key={x} x={x} y={y} width="12" height={70 - y} rx="3" />)}</svg>;
+  const path = variant === "treasury" ? "M0 58 C32 51 50 63 83 46 S134 42 165 33 S214 35 244 20 S285 22 320 5" : "M0 63 C38 58 53 47 85 52 S137 29 166 38 S208 32 238 18 S283 26 320 9";
+  return <svg className={`stat-chart stat-chart--${variant}`} viewBox="0 0 320 76" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id={`chart-fill-${variant}`} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="var(--chart-color)" stopOpacity=".48" /><stop offset="1" stopColor="var(--chart-color)" stopOpacity="0" /></linearGradient></defs><path className="chart-area" d={`${path} L320 76 L0 76Z`} /><path className="chart-line" d={path} /></svg>;
+}
+
+function MenuGlyph() { return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>; }
+function ThemeGlyph({ dark }: { dark: boolean }) { return dark ? <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3.8" stroke="currentColor" strokeWidth="1.6"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg> : <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20.5 15.2A8.4 8.4 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></svg>; }
 
 function ShieldGlyph() { return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 19 6v5.2c0 4.1-2.8 7.8-7 9.8-4.2-2-7-5.7-7-9.8V6l7-3Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="m9 12 2 2 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function GridGlyph() { return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6"/><rect x="14" y="4" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6"/><rect x="4" y="14" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6"/><rect x="14" y="14" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6"/></svg>; }

@@ -4,7 +4,7 @@ import "@near-wallet-selector/modal-ui/styles.css";
 import { WalletProvider } from "@/app/wallet-provider";
 
 export const metadata: Metadata = {
-  title: "Guardian | Wallet protection",
+  title: "LODESTAR | Wallet protection",
   description: "A NEAR wallet guardian that pauses unusual spending for review.",
 };
 
